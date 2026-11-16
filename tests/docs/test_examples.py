@@ -977,12 +977,13 @@ async def test_tools(
             "name": "get_weather",
             "description": "Current weather in a city.",
             "parameters": {
-                "type": "object",
-                "properties": {"city": {"type": "string"}},
+                "properties": {
+                    "city": {"title": "City", "type": "string"},
+                },
                 "required": ["city"],
-                "additionalProperties": False,
+                "type": "object",
             },
-            "strict": True,
+            "strict": None,
         }
     ]
     assert json.loads(second.body)["input"] == [

@@ -89,7 +89,8 @@
     "Turn",
     "UnprocessableEntityError",
     "__version__",
-    "bind_resource"
+    "bind_resource",
+    "tool"
   ],
   "aiollm.adapters": [
     "BaseAdapter",
@@ -1144,7 +1145,8 @@
     "ToolCall",
     "ToolCallTurn",
     "ToolResult",
-    "Turn"
+    "Turn",
+    "tool"
   ],
   "aiollm.types.responses": [
     "BaseResponse",

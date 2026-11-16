@@ -142,6 +142,7 @@ from aiollm.types.requests.generation import (
     ToolCallTurn,
     ToolResult,
     Turn,
+    tool,
 )
 from aiollm.types.responses.events import (
     CompletedEvent,
@@ -254,4 +255,5 @@ __all__ = [
     "UnprocessableEntityError",
     "__version__",
     "bind_resource",
+    "tool",
 ]

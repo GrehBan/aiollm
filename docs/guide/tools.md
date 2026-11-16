@@ -13,24 +13,13 @@ from aiollm import (
     Tool,
     ToolResult,
     Turn,
+    tool,
 )
 
-WEATHER = Tool(
-    name="get_weather",
-    description="Current weather in a city.",
-    parameters={
-        "type": "object",
-        "properties": {"city": {"type": "string"}},
-        "required": ["city"],
-        "additionalProperties": False,
-    },
-    strict=True,
-)
-
-
+@tool
 def get_weather(city: str) -> str:
+    """Current weather in a city."""
     return json.dumps({"city": city, "celsius": 15})
-
 
 async def ask_with_tools(
     client: IGenerationClient, question: str
@@ -38,7 +27,7 @@ async def ask_with_tools(
     conversation: list[InputItem] = [Turn.user(question)]
     while True:
         response = await client.generation.create(
-            model="gpt-6-astra", input=conversation, tools=[WEATHER]
+            model="gpt-6-astra", input=conversation, tools=[get_weather.tool]
         )
         if not response.tool_calls:
             return response
@@ -56,6 +45,17 @@ async def ask_with_tools(
 - **Reasoning comes back.** The turn of calls keeps the response's own output (`ToolCallTurn.native`, from `GenerationResponse.native`): OpenAI's reasoning items, Anthropic's thinking with its signature. The same provider gets it back whole, so the model goes on from its own reasoning instead of thinking again. A turn from another provider sends only the shared calls and text. With OpenAI's `store: False`, its reasoning items carry their content only when the call asks for it: `provider_options={"store": False, "include": ["reasoning.encrypted_content"]}`.
 - **Streaming.** `stream(...)` yields, for each call, a `ToolCallStartEvent` (`call_id`, `name`), `ToolCallDeltaEvent`s with pieces of the arguments and a `ToolCallDoneEvent` with the whole `ToolCall`, before the response ends, so a tool can start early. That event says the call is whole, not that the generation succeeded: the stream can still fail after it (an error event, a cut connection) and then raises that error instead of ending with a `CompletedEvent`. Start early only a tool that is safe to run for a failed generation, such as one that only reads, and run a tool with side effects after the `CompletedEvent`, from its `tool_calls` (see the example below). `events.final()` gives the `CompletedEvent` with `tool_calls`, and its `to_turn()` continues the conversation as `response.to_turn()` does.
 - **Not shared.** OpenAI's built-in tools (web search, file search, code interpreter, MCP, ...), Anthropic's server tools, results with images or files, and the providers' own tool fields (such as Anthropic's `cache_control`) are reached through the provider's own methods, `CreateResponse` and `CreateMessage`. There is no runner that calls your functions for you: the loop above is yours to shape (how many rounds, what to do with a failing tool, whether to run calls in parallel).
+
+For a callable, `Tool.from_callable(function, description=..., strict=...)`
+uses its name, parameter annotations, and docstring to create the tool
+definition. Pass `description=` to override the docstring and `strict=` to
+choose strictness. The exported `@tool` decorator wraps a function and exposes
+its generated definition as `.tool`, while preserving its metadata and direct
+calling interface. It generates the definition once. `Tool.from_callable`
+also accepts a decorated function and returns its definition or a copy with
+description and strictness overrides. Neither API runs the callable; your
+request loop still invokes it for a model call. Strict mode follows the
+schema requirements above.
 
 A tool can take its arguments from a Pydantic model: `Tool.from_model(name, Model, ...)` sends the model's JSON Schema as `parameters`, and `parse_arguments(Model)` gives the arguments back as the model. For `strict=True`, the model forbids extra fields and has no defaults, since the providers want `additionalProperties: false` and every property required:
 
@@ -109,7 +109,7 @@ async def stream_round(
     early: dict[str, asyncio.Task[str]] = {}
     try:
         async with client.generation.stream(
-            model="gpt-6-astra", input=conversation, tools=[WEATHER]
+            model="gpt-6-astra", input=conversation, tools=[get_weather.tool]
         ) as events:
             async for event in events:
                 if (

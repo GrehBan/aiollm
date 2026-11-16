@@ -12,12 +12,6 @@ wheels/
 # Local secrets (API keys for live runs)
 .env
 
-# Test and type-check outputs
-.coverage
-coverage.xml
-report.html
-.mypy_cache/
-
 # The documentation site, built by mkdocs
 site/
 
@@ -26,3 +20,14 @@ site/
 .claude/settings.local.json
 .claude/launch.json
 .claude/worktrees/
+.vscode/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
