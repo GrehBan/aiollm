@@ -26,6 +26,7 @@ from aiollm.types.requests.generation import (
     ToolCallTurn,
     ToolResult,
     Turn,
+    tool,
 )
 
 __all__ = [
@@ -48,4 +49,5 @@ __all__ = [
     "ToolCallTurn",
     "ToolResult",
     "Turn",
+    "tool",
 ]

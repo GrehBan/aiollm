@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.11.0] - 2026-11-16
+
+### Added
+
+- A `user` turn of `client.generation` can hold images and PDF documents:
+  `Turn.user([...])` takes a list of `TextPart`, `ImagePart` and
+  `DocumentPart`, each image or document given as bytes (sent inline in
+  base64) or as a URL. `await ImagePart.load(path)` and
+  `await DocumentPart.load(path)` read a file in a worker thread. OpenAI
+  gets `input_text`, `input_image` and `input_file` items, Anthropic
+  `text`, `image` and `document` blocks; parts in an `assistant` turn
+  raise `ValidationError`.
+- Added `Tool.from_callable` and the `@tool` decorator to derive a tool's
+  name, description, and argument schema from a callable. Decorated functions
+  remain directly callable and expose their cached definition as `.tool`.
+- `Tool.from_model(name, Model, ...)` makes a tool whose `parameters` are a
+  Pydantic model's JSON Schema, and `ToolCall.parse_arguments(Model)`
+  validates a call's arguments with the model and returns it, raising the
+  model's `ValidationError` (a `ValueError`) for arguments the tool does
+  not take. `parse_arguments()` without a model still checks only that the
+  arguments are a JSON object.
+
+### Changed
+
+- **Breaking:** `Turn.content` is typed `str | list[ContentPart]` instead of
+  `str`, since a `user` turn can now hold parts. Turns built from a string
+  are unchanged at run time, but code that reads `turn.content` as a string
+  no longer type-checks: narrow it first with
+  `isinstance(turn.content, str)`. An `assistant` turn is always a string.
+- The provider types are reproducible: `scripts/generate_provider_types.py`
+  runs aiollm-codegen from the `codegen` dependency group, pinned to a
+  commit of its public repository, and downloads OpenAI's OpenAPI file at
+  a pinned commit, refusing a file whose SHA-256 is not the one of the
+  contract snapshot. CI regenerates the types and fails when any file
+  changes.
+
+### Fixed
+
+- A request body with a Pydantic URL in it, such as the `file_url` or
+  `image_url` of OpenAI's generated parameters, failed with "Request body
+  cannot be encoded as JSON". URLs are now sent as their text.
+- The documentation of `ToolCallDoneEvent` said a call "may be run" as
+  soon as it arrives. It now says what the event guarantees: the
+  arguments of that call are complete, not that the generation succeeded,
+  since the stream can still fail before its `CompletedEvent`. The tools
+  guide shows how to start only the tools that are safe to run early and
+  run the ones with side effects after the stream has completed.
+- The generation guide gives the measured peak memory of a request with a
+  loaded file: about 15 times the file's size with the default orjson
+  encoder, which briefly holds a buffer far larger than its result for a
+  long string, and about 5 times with `json_dumps=json.dumps`.
+
 ## [0.10.0] - 2026-11-07
 
 ### Added
@@ -1106,7 +1158,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/GrehBan/aiollm/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/GrehBan/aiollm/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/GrehBan/aiollm/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/GrehBan/aiollm/compare/v0.7.0...v0.8.0

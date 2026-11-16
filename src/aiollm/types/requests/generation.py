@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
-from collections.abc import Sequence
-from typing import Annotated, Final, Literal, Self, overload
+from collections.abc import Callable, Sequence
+from typing import Annotated, Final, Literal, Self, cast, overload
 
 from pydantic import (
     MISSING,
@@ -15,6 +17,8 @@ from pydantic import (
     Tag,
     model_validator,
 )
+from pydantic.experimental.arguments_schema import generate_arguments_schema
+from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypedDict
 
 from aiollm.enums import Effort, Provider, Role, ToolChoice
@@ -114,6 +118,75 @@ TOOL_NAME_PATTERN: Final = r"^[a-zA-Z0-9_-]{1,128}$"
 characters OpenAI took in a live check (2026-11-06)."""
 
 
+class tool[RT, **P]:
+    """Wrap a callable and expose its tool definition.
+
+    The original callable remains directly executable through the
+    wrapper, preserving its calling interface and metadata.
+
+    A ``Tool`` definition is generated once during initialization
+    and exposed through the read-only ``tool`` property. The definition
+    can be passed directly to a provider request without additional
+    introspection or JSON Schema generation.
+
+    Attributes:
+        callback: The original callable wrapped by this object.
+        tool: The generated immutable ``Tool`` definition.
+
+    Example:
+        >>> @tool
+        ... def get_weather(city: str) -> dict:
+        ...     \"\"\"Get current weather in a city.\"\"\"
+        ...     return {"city": city}
+        ...
+        >>> get_weather("Paris")
+        {"city": "Paris"}
+        >>> get_weather.tool.name
+        'get_weather'
+        >>> request_tools = [get_weather.tool]
+    """
+
+    def __init__(self, obj: Callable[P, RT]) -> None:
+        """Initialize the wrapper and generate its tool definition.
+
+        The callable's metadata is copied to the wrapper, and its
+        ``Tool`` definition is generated and cached.
+
+        Args:
+            obj: The callable to wrap.
+
+        Raises:
+            TypeError: The callable does not have a valid tool name.
+        """
+        functools.update_wrapper(self, obj)
+        self.callback = obj
+        self.__tool__ = Tool.from_callable(self.callback)
+
+    @property
+    def tool(self) -> Tool:
+        """The cached tool definition."""
+        return self.__tool__
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> RT:
+        """Invoke the wrapped callable with the supplied arguments.
+
+        Arguments are forwarded unchanged to the original callable.
+        The result is returned without modification.
+
+        Args:
+            *args: Positional arguments forwarded to the callable.
+            **kwargs: Keyword arguments forwarded to the callable.
+
+        Returns:
+            The result of the original callable.
+
+        Raises:
+            Exception: Any exception raised by the original callable
+                is propagated unchanged.
+        """
+        return self.callback(*args, **kwargs)
+
+
 class Tool(BaseAPIType):
     """A function in your code that the model may call.
 
@@ -149,6 +222,83 @@ class Tool(BaseAPIType):
     description: str | MISSING = MISSING
     parameters: JSONSchema
     strict: bool | MISSING = MISSING
+
+    @classmethod
+    def from_callable[RT, **P](
+        cls,
+        obj: Callable[P, RT],
+        *,
+        description: str | MISSING = MISSING,
+        strict: bool | MISSING = MISSING,
+    ) -> Self:
+        """Create a tool from a callable's signature and annotations.
+
+        The callable's ``__name__`` is used as the tool name.
+        Its parameters and annotations are converted to JSON Schema
+        using Pydantic's arguments schema generation.
+
+        If ``description`` is not provided, the callable's docstring
+        is used. If it has no docstring, the description is omitted.
+
+        The callable itself is not stored or executed. Only its
+        metadata is used to construct the tool.
+
+        Args:
+            obj: The callable whose signature defines the tool's
+                arguments.
+            description: What the tool does and when to use it.
+                Defaults to the callable's docstring.
+            strict: Whether the arguments must follow the generated
+                schema exactly.
+
+        Returns:
+            The tool.
+
+        Raises:
+            TypeError: The callable does not have a ``__name__``.
+
+        Example:
+            >>> def get_weather(city: str, units: str = "celsius"):
+            ...     ...
+            >>> tool = Tool.from_callable(
+            ...     get_weather,
+            ...     description="Get current weather in a city.",
+            ... )
+        """
+        if not isinstance(obj, tool):
+            return cls._from_callable(
+                obj=obj, description=description, strict=strict
+            )
+        updates: dict[str, str | bool] = {}
+        if description is not MISSING:
+            updates["description"] = description
+        if strict is not MISSING:
+            updates["strict"] = strict
+        return cast(Self, obj.__tool__.model_copy(update=updates))
+
+    @classmethod
+    def _from_callable[RT, **P](
+        cls,
+        obj: Callable[P, RT],
+        *,
+        description: str | MISSING = MISSING,
+        strict: bool | MISSING = MISSING,
+    ) -> Self:
+        name = getattr(obj, "__name__", None)
+        if name is None:
+            raise TypeError("Callable requires an explicit name")
+
+        if description is MISSING:
+            description = inspect.getdoc(obj) or MISSING
+
+        core = generate_arguments_schema(obj)
+        schema = GenerateJsonSchema().generate(core)
+        return cls(
+            name=name,
+            description=description,
+            parameters=schema,
+            strict=strict,
+        )
 
     @classmethod
     def from_model(

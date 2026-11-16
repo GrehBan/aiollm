@@ -18,6 +18,7 @@ from pydantic import (
 )
 from pytest_mock import MockerFixture
 
+from aiollm import tool
 from aiollm.adapters.base import (
     BaseAdapter,
     BaseCompositeAdapter,
@@ -1061,6 +1062,92 @@ def test_a_tool_from_a_model_sends_its_schema() -> None:
         True,
     )
     assert Tool.from_model("f", City).strict is MISSING
+
+
+def test_a_tool_from_a_callable_sends_its_schema() -> None:
+    called: list[str] = []
+
+    def get_weather(city: str, days: int = 1) -> str:
+        """Get a weather forecast."""
+        called.append(city)
+        return f"{city}: {days}"
+
+    definition = Tool.from_callable(get_weather)
+
+    assert definition.name == "get_weather"
+    assert definition.description == "Get a weather forecast."
+    assert definition.strict is MISSING
+    assert definition.parameters == {
+        "properties": {
+            "city": {"title": "City", "type": "string"},
+            "days": {
+                "default": 1,
+                "title": "Days",
+                "type": "integer",
+            },
+        },
+        "required": ["city"],
+        "type": "object",
+    }
+    assert called == []
+
+
+def test_a_tool_from_a_callable_uses_explicit_options() -> None:
+    def echo(text: str) -> str:
+        return text
+
+    default = Tool.from_callable(echo)
+    described = Tool.from_callable(echo, description="Echo text.", strict=True)
+
+    assert default.description is MISSING
+    assert default.strict is MISSING
+    assert described.parameters == default.parameters
+    assert (described.description, described.strict) == (
+        "Echo text.",
+        True,
+    )
+
+
+def test_the_tool_decorator_wraps_and_exposes_the_callable() -> None:
+    @tool
+    def add(left: int, right: int) -> int:
+        """Add two integers."""
+        return left + right
+
+    definition = add.tool
+
+    assert add(2, 3) == 5
+    assert vars(add)["__name__"] == "add"
+    assert vars(add)["__doc__"] == "Add two integers."
+    assert add.tool is definition
+    assert (definition.name, definition.description, definition.strict) == (
+        "add",
+        "Add two integers.",
+        MISSING,
+    )
+    assert Tool.from_callable(add) == definition
+
+    described = Tool.from_callable(add, description="Add values.", strict=True)
+
+    assert described is not definition
+    assert described.parameters == definition.parameters
+    assert (described.description, described.strict) == (
+        "Add values.",
+        True,
+    )
+    assert (definition.description, definition.strict) == (
+        "Add two integers.",
+        MISSING,
+    )
+
+
+def test_a_callable_without_a_name_cannot_define_a_tool() -> None:
+    class CallableWithoutName:
+        def __call__(self, text: str) -> str:
+            return text
+
+    with pytest.raises(TypeError, match="Callable requires an explicit name"):
+        Tool.from_callable(CallableWithoutName())
 
 
 def test_tool_call_arguments_are_validated_by_a_model() -> None:
