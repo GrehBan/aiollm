@@ -6,7 +6,7 @@ import functools
 import inspect
 import json
 from collections.abc import Callable, Sequence
-from typing import Annotated, Final, Literal, Self, cast, overload
+from typing import Annotated, Any, Final, Literal, Self, cast, overload
 
 from pydantic import (
     MISSING,
@@ -14,11 +14,14 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    PrivateAttr,
     Tag,
+    field_validator,
     model_validator,
 )
 from pydantic.experimental.arguments_schema import generate_arguments_schema
 from pydantic.json_schema import GenerateJsonSchema
+from pydantic_core import CoreSchema, SchemaValidator
 from typing_extensions import TypedDict
 
 from aiollm.enums import Effort, Provider, Role, ToolChoice
@@ -118,49 +121,69 @@ TOOL_NAME_PATTERN: Final = r"^[a-zA-Z0-9_-]{1,128}$"
 characters OpenAI took in a live check (2026-11-06)."""
 
 
-class tool[RT, **P]:
+class _tool[RT, **P]:
     """Wrap a callable and expose its tool definition.
 
     The original callable remains directly executable through the
-    wrapper, preserving its calling interface and metadata.
+    wrapper. Its metadata is preserved using ``functools.update_wrapper``,
+    allowing introspection tools to access the original callable.
 
     A ``Tool`` definition is generated once during initialization
-    and exposed through the read-only ``tool`` property. The definition
-    can be passed directly to a provider request without additional
-    introspection or JSON Schema generation.
+    and cached for subsequent access through the ``tool`` property.
+    The definition can be passed directly to a provider request.
 
     Attributes:
         callback: The original callable wrapped by this object.
         tool: The generated immutable ``Tool`` definition.
-
-    Example:
-        >>> @tool
-        ... def get_weather(city: str) -> dict:
-        ...     \"\"\"Get current weather in a city.\"\"\"
-        ...     return {"city": city}
-        ...
-        >>> get_weather("Paris")
-        {"city": "Paris"}
-        >>> get_weather.tool.name
-        'get_weather'
-        >>> request_tools = [get_weather.tool]
     """
 
-    def __init__(self, obj: Callable[P, RT]) -> None:
+    def __init__(
+        self,
+        obj: Tool | Callable[P, RT],
+        strict: bool | MISSING = MISSING,
+        description: str | MISSING = MISSING,
+    ) -> None:
         """Initialize the wrapper and generate its tool definition.
-
-        The callable's metadata is copied to the wrapper, and its
-        ``Tool`` definition is generated and cached.
 
         Args:
             obj: The callable to wrap.
+            strict: Whether to request strict adherence to the
+                generated parameter schema from the provider.
+            description: Description of the tool and its purpose.
+                Defaults to the callable's docstring. If neither is
+                provided, the description is omitted.
 
         Raises:
-            TypeError: The callable does not have a valid tool name.
+            TypeError: The callable cannot be converted into a tool.
         """
-        functools.update_wrapper(self, obj)
-        self.callback = obj
-        self.__tool__ = Tool.from_callable(self.callback)
+        if isinstance(obj, Tool):
+            callback = obj._tool_callback  # pyright: ignore[reportPrivateUsage]
+            if callback is None:
+                raise TypeError("Tool has no associated callable")
+            definition = obj
+        else:
+            callback = obj
+            definition = Tool.from_callable(
+                callback,
+                strict=strict,
+                description=description,
+            )
+
+        functools.update_wrapper(self, callback)
+        self.callback = callback
+        self.__tool__ = definition
+
+    def with_updates(
+        self,
+        strict: bool | MISSING = MISSING,
+        description: str | MISSING = MISSING,
+    ) -> Tool:
+        updates: dict[str, str | bool] = {}
+        if strict is not MISSING:
+            updates["strict"] = strict
+        if description is not MISSING:
+            updates["description"] = description
+        return self.tool.model_copy(update=updates)
 
     @property
     def tool(self) -> Tool:
@@ -185,6 +208,105 @@ class tool[RT, **P]:
                 is propagated unchanged.
         """
         return self.callback(*args, **kwargs)
+
+
+@overload
+def tool[RT, **P](
+    obj: Tool | Callable[P, RT],
+    /,
+    *,
+    description: str | MISSING = MISSING,
+    strict: bool | MISSING = MISSING,
+) -> _tool[RT, P]: ...
+
+
+@overload
+def tool[RT, **P](
+    *,
+    description: str | MISSING = MISSING,
+    strict: bool | MISSING = MISSING,
+) -> Callable[[Callable[P, RT]], _tool[RT, P]]: ...
+
+
+def tool[RT, **P](
+    obj: Tool | Callable[P, RT] | None = None,
+    /,
+    *,
+    description: str | MISSING = MISSING,
+    strict: bool | MISSING = MISSING,
+) -> _tool[RT, P] | Callable[[Callable[P, RT]], _tool[RT, P]]:
+    """Decorate a callable and expose its tool definition.
+
+    Supports both direct and configured decorator syntax. The
+    resulting wrapper preserves the original callable's calling
+    interface and metadata.
+
+    A ``Tool`` definition is generated once when the callable is
+    decorated and exposed through the wrapper's ``tool`` property.
+    The wrapper itself can be passed to ``GenerationRequest`` or
+    ``generation.create(tools=...)``; the cached definition is reused.
+    Use ``.tool`` when a ``Tool`` object is needed separately.
+
+    The decorator does not execute tool calls returned by the
+    provider; it only wraps the callable and provides its definition.
+
+    Args:
+        obj: The callable to wrap. Omit it to configure the
+            decorator before applying it.
+        description: Description of the tool and its purpose.
+            Defaults to the callable's docstring. If neither is
+            provided, the description is omitted.
+        strict: Whether to request strict adherence to the generated
+            parameter schema from the provider.
+
+    Returns:
+        A callable wrapper when ``obj`` is provided, or a decorator
+        accepting a callable otherwise.
+
+    Examples:
+        Direct decoration:
+
+        >>> @tool
+        ... def get_weather(city: str) -> dict:
+        ...     \"\"\"Get current weather in a city.\"\"\"
+        ...     return {"city": city}
+        ...
+        >>> get_weather("Paris")
+        {'city': 'Paris'}
+        >>> request = GenerationRequest(
+        ...     model="gpt-5", input="Weather?", tools=get_weather
+        ... )
+
+        Configured decoration:
+
+        >>> @tool(
+        ...     description="Search for items matching a query.",
+        ...     strict=True,
+        ... )
+        ... def search(query: str, limit: int) -> list:
+        ...     return []
+        ...
+        >>> request = GenerationRequest(
+        ...     model="gpt-5", input="Search", tools=[get_weather, search]
+        ... )
+    """
+    ...
+    if obj is None:
+        return lambda callback: _tool(
+            callback, strict=strict, description=description
+        )
+
+    return _tool(obj, strict=strict, description=description)
+
+
+def _set_tool_internals(
+    obj: Tool,
+    *,
+    core: CoreSchema,
+    callback: Callable[..., Any] | None = None,
+) -> None:
+    obj._tool_schema_validator = SchemaValidator(core)  # pyright: ignore[reportPrivateUsage]
+    obj._tool_callback = callback  # pyright: ignore[reportPrivateUsage]
 
 
 class Tool(BaseAPIType):
@@ -222,6 +344,9 @@ class Tool(BaseAPIType):
     description: str | MISSING = MISSING
     parameters: JSONSchema
     strict: bool | MISSING = MISSING
+    _tool_schema_validator: SchemaValidator | None = PrivateAttr(default=None)
+    _tool_callback: Callable[..., Any] | None = PrivateAttr(default=None)
+    _tool_arguments_model: type[BaseModel] | None = PrivateAttr(default=None)
 
     @classmethod
     def from_callable[RT, **P](
@@ -240,8 +365,9 @@ class Tool(BaseAPIType):
         If ``description`` is not provided, the callable's docstring
         is used. If it has no docstring, the description is omitted.
 
-        The callable itself is not stored or executed. Only its
-        metadata is used to construct the tool.
+        The callable is retained as the tool callback. Defining the
+        tool does not invoke it; ``generation.tool_runner`` invokes it
+        for a matching tool call after a complete response.
 
         Args:
             obj: The callable whose signature defines the tool's
@@ -265,16 +391,11 @@ class Tool(BaseAPIType):
             ...     description="Get current weather in a city.",
             ... )
         """
-        if not isinstance(obj, tool):
+        if not isinstance(obj, _tool):
             return cls._from_callable(
                 obj=obj, description=description, strict=strict
             )
-        updates: dict[str, str | bool] = {}
-        if description is not MISSING:
-            updates["description"] = description
-        if strict is not MISSING:
-            updates["strict"] = strict
-        return cast(Self, obj.__tool__.model_copy(update=updates))
+        return cast(Self, obj.with_updates(strict, description))
 
     @classmethod
     def _from_callable[RT, **P](
@@ -293,12 +414,18 @@ class Tool(BaseAPIType):
 
         core = generate_arguments_schema(obj)
         schema = GenerateJsonSchema().generate(core)
-        return cls(
+        result = cls(
             name=name,
             description=description,
             parameters=schema,
             strict=strict,
         )
+        _set_tool_internals(
+            result,
+            core=core,
+            callback=obj,
+        )
+        return result
 
     @classmethod
     def from_model(
@@ -334,12 +461,17 @@ class Tool(BaseAPIType):
             ...     city: str
             >>> tool = Tool.from_model("get_weather", City, strict=True)
         """
-        return cls(
+        result = cls(
             name=name,
             description=description,
             parameters=model.model_json_schema(),
             strict=strict,
         )
+        _set_tool_internals(
+            result,
+            core=model.__pydantic_core_schema__,
+        )
+        return result
 
 
 class ForcedTool(BaseAPIType):
@@ -358,6 +490,81 @@ class ForcedTool(BaseAPIType):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str = Field(pattern=TOOL_NAME_PATTERN)
+
+
+@overload
+def parse_model_arguments[ModelT: BaseModel](
+    model: type[ModelT],
+    /,
+    arguments: str,
+) -> ModelT: ...
+
+
+@overload
+def parse_model_arguments(
+    model: Tool,
+    /,
+    arguments: str,
+) -> tuple[tuple[Any, ...], dict[str, Any]]: ...
+
+
+@overload
+def parse_model_arguments(
+    model: Callable[..., Any],
+    /,
+    arguments: str,
+) -> Any: ...
+
+
+@overload
+def parse_model_arguments(
+    model: type[BaseModel] | Tool | Callable[..., Any],
+    /,
+    arguments: str,
+) -> Any: ...
+
+
+def parse_model_arguments(
+    model: type[BaseModel] | Tool | Callable[..., Any],
+    /,
+    arguments: str,
+) -> Any:
+    """Parse and validate JSON arguments using a model, tool or callable.
+
+    Args:
+        model: A Pydantic model, a ``Tool`` with an associated argument
+            schema, or a callable whose argument schema can be generated.
+        arguments: A JSON string containing the arguments to parse.
+
+    Returns:
+        The validated Pydantic model instance when ``model`` is a
+        Pydantic model. For a ``Tool`` or callable, returns a tuple
+        containing positional and keyword arguments (``args``, ``kwargs``).
+
+    Raises:
+        TypeError: The supplied object is not a supported model, tool or
+            callable or tool has no associated argument validator.
+        ValidationError: The JSON arguments do not satisfy the expected
+            schema.
+    """
+    if isinstance(model, Tool):
+        validator = model._tool_schema_validator  # pyright: ignore[reportPrivateUsage]
+        if validator is None:
+            raise TypeError("Tool has no associated argument validator")
+        return validator.validate_json(arguments)
+
+    if inspect.isclass(model) and issubclass(model, BaseModel):
+        return model.model_validate_json(arguments)
+
+    if callable(model):
+        core = generate_arguments_schema(model)
+        validator = SchemaValidator(core)
+        return validator.validate_json(arguments)
+
+    raise TypeError(
+        f"Expected a Pydantic model, Tool or callable, "
+        f"got {type(model).__name__}"
+    )
 
 
 class ToolCall(BaseAPIType):
@@ -394,36 +601,42 @@ class ToolCall(BaseAPIType):
         self, model: type[ModelT]
     ) -> ModelT: ...
 
+    @overload
     def parse_arguments(
-        self, model: type[BaseModel] | None = None
-    ) -> dict[str, JSONValue] | BaseModel:
-        """Parse the arguments, and validate them with a model if given.
+        self, model: Tool
+    ) -> tuple[tuple[Any, ...], dict[str, Any]]: ...
 
-        Without a model only the JSON is checked, not the tool's
-        ``parameters``: a model may write other arguments unless the
-        tool is ``strict``. With one (the model of
-        ``Tool.from_model``), the arguments are validated by it.
+    @overload
+    def parse_arguments(self, model: Callable[..., Any]) -> Any: ...
+
+    def parse_arguments(
+        self,
+        model: type[BaseModel] | Tool | Callable[..., Any] | None = None,
+    ) -> Any:
+        """Parse the tool call arguments, validating against a schema.
 
         Args:
-            model: The Pydantic model the arguments must follow.
+            model: An optional Pydantic model, ``Tool`` or callable used to
+                parse and validate the arguments. When omitted, the arguments
+                are parsed as a JSON object
+                without additional schema validation.
 
         Returns:
-            The arguments as a JSON object, or the model made from them.
+            The parsed JSON object when ``model`` is omitted. Otherwise,
+            returns the result of ``parse_model_arguments``: a validated
+            Pydantic model instance or a tuple of positional and keyword
+            arguments (``args``, ``kwargs``).
 
         Raises:
-            ValueError: The arguments are not a JSON object, or do not
-                follow the model (a ``pydantic.ValidationError``, which
-                is a ``ValueError``).
-
-        Example:
-            >>> call.parse_arguments(City).city
-            'Paris'
+            TypeError: The supplied tool or callable has no usable argument
+                schema.
+            ValidationError: The arguments are not satisfy
+                the expected schema.
+            ValueError: The arguments are not a JSON object.
         """
-        value = self._parse_object()
         if model is None:
-            return value
-        # From the text, so JSON's rules apply (a date from its string).
-        return model.model_validate_json(self.arguments)
+            return self._parse_object()
+        return parse_model_arguments(model, self.arguments)
 
     def _parse_object(self) -> dict[str, JSONValue]:
         """Parse the arguments as a JSON object.
@@ -549,6 +762,9 @@ class NoProviderOptions(TypedDict, total=False, closed=True):
     """
 
 
+type ToolType = Tool | Callable[..., Any]
+
+
 class GenerationRequest(BaseRequest):
     """Generate text from an input.
 
@@ -573,8 +789,12 @@ class GenerationRequest(BaseRequest):
             text is then JSON. Each provider takes its own subset of
             JSON Schema and answers 400 to the rest; the schema is sent
             as it is, never rewritten.
-        tools: Functions the model may call, at least one, with unique
-            names.
+        tools: A single ``Tool`` or callable, or a sequence of them,
+            describing functions the model may call. Callables are
+            converted to ``Tool`` definitions using their signatures
+            and annotations; decorated callables reuse their cached
+            definitions. The resulting list must contain at least one
+            tool, and tool names must be unique.
         tool_choice: Whether the model calls a tool (a ``ToolChoice``) or
             which one (a ``ForcedTool`` naming one of ``tools``); the
             providers' default is ``ToolChoice.AUTO``. Only with
@@ -588,10 +808,18 @@ class GenerationRequest(BaseRequest):
     so leave a field out rather than set it to ``None``.
 
     Example:
+        >>> def get_weather(city: str) -> dict:
+        ...     \"\"\"Get current weather in a city.\"\"\"
+        ...     ...
         >>> GenerationRequest(
         ...     model="gpt-5",
-        ...     input=[Turn.user("Hi"), Turn.assistant("Hello!"),
-        ...            Turn.user("How are you?")],
+        ...     input="What is the weather in Paris?",
+        ...     tools=get_weather,
+        ... )
+        >>> GenerationRequest(
+        ...     model="gpt-5",
+        ...     input="Find the weather.",
+        ...     tools=[get_weather, another_tool],
         ... )
     """
 
@@ -605,9 +833,64 @@ class GenerationRequest(BaseRequest):
     end_user_id: str | MISSING = Field(default=MISSING, min_length=1)
     effort: Effort | MISSING = MISSING
     output_schema: JSONSchema | MISSING = MISSING
-    tools: Annotated[list[Tool], Field(min_length=1)] | MISSING = MISSING
+    tools_: (
+        Annotated[Sequence[ToolType] | ToolType, Field(min_length=1)] | MISSING
+    ) = Field(
+        alias="tools",
+        validation_alias="tools",
+        serialization_alias="tools",
+        default=MISSING,
+    )
     tool_choice: ToolChoice | ForcedTool | MISSING = MISSING
     parallel_tool_calls: bool | MISSING = MISSING
+
+    @property
+    def tools(self) -> list[Tool] | MISSING:
+        """Return the tools after converting callable definitions."""
+        return cast(list[Tool] | MISSING, self.tools_)
+
+    @field_validator("tools_", mode="before")
+    @classmethod
+    def _callables_to_tools(cls, value: Any) -> list[Tool] | MISSING:
+        """Normalize tool definitions and callables into a list of tools.
+
+        Args:
+            value: A tool, callable, sequence of tools and callables,
+                or ``MISSING`` if no tools were provided.
+
+        Returns:
+            A list of normalized tool definitions, or ``MISSING``
+            if no tools were provided.
+
+        Raises:
+            ValueError: The input is not a tool, callable, or sequence
+                of tools and callables, or the sequence contains an
+                unsupported item.
+        """
+        if value is MISSING:
+            return value
+        if isinstance(value, (Tool, _tool)) or callable(value):
+            value = [value]
+        elif not isinstance(value, Sequence):
+            raise ValueError(
+                f"Expected a Tool, "
+                f"callable or sequence, got {type(value).__name__}"
+            )
+
+        result: list[Tool] = []
+
+        for item in value:
+            if isinstance(item, Tool):
+                result.append(item)
+            elif isinstance(item, _tool):
+                result.append(item.tool)
+            elif callable(item):
+                result.append(Tool.from_callable(item))
+            else:
+                raise ValueError(
+                    f"Expected Tool or callable, got {type(item).__name__}"
+                )
+        return result
 
     @model_validator(mode="after")
     def _check_tools(self) -> Self:

@@ -35,6 +35,7 @@ from aiollm import (
     ServerSentEvent,
     Stream,
     bind_resource,
+    tool,
 )
 from aiollm.adapters import (
     BaseAdapter,
@@ -561,6 +562,42 @@ async def generation_takes_keyword_arguments(client: OpenAIClient) -> None:
     await client.generation.create(model="m", input="x", instructions=None)  # type: ignore[call-overload]
 
 
+async def generation_takes_callable_tools(
+    client: IGenerationClient,
+) -> None:
+    def lookup(city: str) -> dict[str, str]:
+        return {"city": city}
+
+    @tool
+    def get_time(city: str) -> str:
+        return f"Time in {city}"
+
+    await client.generation.create(model="m", input="x", tools=lookup)
+    await client.generation.create(
+        model="m", input="x", tools=[lookup, get_time]
+    )
+    async with client.generation.stream(
+        model="m", input="x", tools=get_time
+    ) as events:
+        async for _event in events:
+            pass
+
+
+async def tool_runner_takes_callable_tools(client: OpenAIClient) -> None:
+    @tool
+    def lookup(city: str) -> str:
+        return city
+
+    await client.generation.tool_runner.create(
+        model="m", input="x", tools=lookup
+    )
+    async with client.generation.tool_runner.stream(
+        model="m", input="x", tools=[lookup]
+    ) as events:
+        async for _event in events:
+            pass
+
+
 async def generation_takes_the_call_options(
     client: OpenAIClient,
     request: GenerationRequest,
@@ -718,7 +755,7 @@ def tool_arguments_take_a_model(call: ToolCall) -> None:
     assert_type(tool, Tool)
     assert_type(call.parse_arguments(), dict[str, JSONValue])
     assert_type(call.parse_arguments(CityArguments), CityArguments)
-    call.parse_arguments(dict)  # type: ignore[type-var]
+    call.parse_arguments(object())  # type: ignore[call-overload]
     Tool.from_model("f", dict)  # type: ignore[arg-type]
 
 

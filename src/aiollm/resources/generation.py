@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING, Any, Unpack, overload
 from pydantic import MISSING
 
 from aiollm.resources.base import BaseResource
-from aiollm.resources.protocols import IGenerationAdapter
+from aiollm.resources.protocols import IGenerationAdapter, make_request
 from aiollm.resources.stream import GenerationStream
+from aiollm.resources.tool_runner import ToolRunner
 from aiollm.resources.usecases import (
     AdapterCompositeUseCase,
     open_adapted_stream,
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
         ForcedTool,
         InputItem,
         JSONSchema,
-        Tool,
+        ToolType,
     )
 
 
@@ -89,6 +90,8 @@ class GenerationResource[
             session, adapter, terminal=GENERATION_TERMINAL
         )
 
+        self.tool_runner = ToolRunner[RawT, RawItemT, OptionsT, SessionT](self)
+
     @overload
     async def create(
         self,
@@ -101,7 +104,7 @@ class GenerationResource[
         end_user_id: str | MISSING = MISSING,
         effort: Effort | MISSING = MISSING,
         output_schema: JSONSchema | MISSING = MISSING,
-        tools: list[Tool] | MISSING = MISSING,
+        tools: ToolType | Sequence[ToolType] | MISSING = MISSING,
         tool_choice: ToolChoice | ForcedTool | MISSING = MISSING,
         parallel_tool_calls: bool | MISSING = MISSING,
         provider_options: OptionsT | MISSING = MISSING,
@@ -162,7 +165,7 @@ class GenerationResource[
                 terminal=GENERATION_TERMINAL,
             )
         return await generate(
-            _request(request, fields),
+            make_request(request, fields),
             headers=headers,
             timeout=timeout,
             retry_policy=retry_policy,
@@ -180,7 +183,7 @@ class GenerationResource[
         end_user_id: str | MISSING = MISSING,
         effort: Effort | MISSING = MISSING,
         output_schema: JSONSchema | MISSING = MISSING,
-        tools: list[Tool] | MISSING = MISSING,
+        tools: ToolType | Sequence[ToolType] | MISSING = MISSING,
         tool_choice: ToolChoice | ForcedTool | MISSING = MISSING,
         parallel_tool_calls: bool | MISSING = MISSING,
         provider_options: OptionsT | MISSING = MISSING,
@@ -246,40 +249,10 @@ class GenerationResource[
         return open_adapted_stream(
             self.session,
             adapter,
-            _request(request, fields),
+            make_request(request, fields),
             self._generate.terminal,
             GenerationStream,
             headers=headers,
             timeout=timeout,
             retry_policy=retry_policy,
         )
-
-
-def _request(
-    request: GenerationRequest | None,
-    fields: dict[str, Any],
-) -> GenerationRequest:
-    """Take the request of a call, given ready or as fields.
-
-    Args:
-        request: The ready request, if one was given.
-        fields: The keyword arguments of the call.
-
-    Returns:
-        The request to send.
-
-    Raises:
-        TypeError: Both a request and fields are given.
-        ValidationError: The fields do not make a valid request, e.g. a
-            field name is misspelled.
-    """
-    if request is None:
-        return GenerationRequest(**fields)
-    if fields:
-        names = ", ".join(sorted(fields))
-        message = (
-            "Pass either a GenerationRequest or its fields as keyword "
-            f"arguments, not both (got the request and {names})"
-        )
-        raise TypeError(message)
-    return request

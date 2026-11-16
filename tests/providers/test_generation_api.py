@@ -115,7 +115,11 @@ def test_keyword_overloads_name_the_request_fields(
     own = ["provider_options"] if owner is GenerationResource else []
 
     assert len(overloads) == 2
-    assert keyword == [*GenerationRequest.model_fields, *own, *own]
+    request_fields = [
+        field.alias or name
+        for name, field in GenerationRequest.model_fields.items()
+    ]
+    assert keyword == [*request_fields, *own, *own]
     signature = inspect.signature(overloads[0])
     assert {
         name

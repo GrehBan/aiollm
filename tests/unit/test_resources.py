@@ -1141,6 +1141,39 @@ def test_the_tool_decorator_wraps_and_exposes_the_callable() -> None:
     )
 
 
+def test_configured_tool_decorator_and_request_normalize_callables() -> None:
+    @tool(description="Multiply values.", strict=True)
+    def multiply(left: int, right: int) -> int:
+        return left * right
+
+    def add(left: int, right: int) -> int:
+        return left + right
+
+    request = GenerationRequest.model_validate(
+        {
+            "model": "m",
+            "input": "Calculate",
+            "tools": [multiply, add],
+        }
+    )
+
+    assert multiply.tool.description == "Multiply values."
+    assert multiply.tool.strict is True
+    assert request.tools is not MISSING
+    assert request.tools[0] is multiply.tool
+    assert request.tools[1].name == "add"
+    assert request.tools[1].parameters == Tool.from_callable(add).parameters
+
+
+def test_tool_call_arguments_can_be_validated_by_a_callable() -> None:
+    def add(left: int, right: int = 0) -> int:
+        return left + right
+
+    call = ToolCall(id="c1", name="add", arguments='{"left": 2, "right": 3}')
+
+    assert call.parse_arguments(add) == ((2, 3), {})
+
+
 def test_a_callable_without_a_name_cannot_define_a_tool() -> None:
     class CallableWithoutName:
         def __call__(self, text: str) -> str:
@@ -1163,8 +1196,8 @@ def test_tool_call_arguments_are_validated_by_a_model() -> None:
     [
         ('{"city": "Paris", "days": 0}', "greater than 0"),
         ('{"city": "Paris", "days": 1, "x": 1}', "Extra inputs"),
-        ("[1]", "tool call c1 are not an object"),
-        ('{"city', "tool call c1 are not JSON"),
+        ("[1]", "Input should be an object"),
+        ('{"city', "Invalid JSON"),
     ],
     ids=["invalid", "extra", "not-an-object", "cut"],
 )

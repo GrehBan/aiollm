@@ -875,8 +875,9 @@ async def test_tools_reach_the_wire(
         recorder.reply(Reply(json=case.response))
     else:
         recorder.reply(events(case.stream))
-    request = REQUEST.model_copy(
-        update={
+    request = GenerationRequest.model_validate(
+        {
+            **REQUEST.model_dump(by_alias=True),
             "tools": TOOLS,
             "tool_choice": ToolChoice.REQUIRED,
             "parallel_tool_calls": False,

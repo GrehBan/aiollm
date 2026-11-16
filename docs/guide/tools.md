@@ -1,6 +1,10 @@
-# Tools
+# Tool calls
 
-`client.generation` lets the model call functions of your code, the same way for every provider: you describe the tools in the request, the model answers with calls instead of (or next to) text, you run them and send their results back in the conversation, until the model answers in text. All of it is imported from `aiollm`.
+A tool call is a request from the model for your application to run a
+function. The library sends tool definitions and returns calls; it does not
+run functions unless you use `generation.tool_runner`. Either way, your
+application decides how to handle failures, how many rounds to allow, and
+whether a call is safe to run.
 
 ```python title="tools.py"
 import json
@@ -17,9 +21,9 @@ from aiollm import (
 )
 
 @tool
-def get_weather(city: str) -> str:
+def get_weather(city: str) -> dict[str, str | int]:
     """Current weather in a city."""
-    return json.dumps({"city": city, "celsius": 15})
+    return {"city": city, "celsius": 15}
 
 async def ask_with_tools(
     client: IGenerationClient, question: str
@@ -27,35 +31,199 @@ async def ask_with_tools(
     conversation: list[InputItem] = [Turn.user(question)]
     while True:
         response = await client.generation.create(
-            model="gpt-6-astra", input=conversation, tools=[get_weather.tool]
+            model="gpt-6-astra",
+            input=conversation,
+            tools=get_weather,
         )
-        if not response.tool_calls:
+        if response.incomplete_reason is not None or not response.tool_calls:
             return response
         conversation.append(response.to_turn())
         for call in response.tool_calls:
-            arguments = call.parse_arguments()
-            output = get_weather(str(arguments["city"]))
+            if call.name != "get_weather":
+                raise ValueError(f"Unknown tool: {call.name}")
+            args, kwargs = call.parse_arguments(get_weather)
+            result = get_weather(*args, **kwargs)
+            output = result if isinstance(result, str) else json.dumps(result)
             conversation.append(ToolResult(call_id=call.id, output=output))
 ```
 
-- **A tool** is a `Tool`: a `name` (letters, digits, `_` and `-`, up to 128 characters, unique in the request), a `description` the model reads to decide when to call it, `parameters`, the JSON Schema of its arguments (an object schema; a tool without arguments takes `{"type": "object", "properties": {}}`), and `strict`. With `strict=True` the arguments follow the schema exactly; the schema then needs `additionalProperties: false` and every property in `required`, and the providers answer 400 otherwise. Left out, neither provider is strict.
-- **Which tool.** `tool_choice=` takes a `ToolChoice` (`AUTO`, the default; `NONE`, no call; `REQUIRED`, at least one call) or a `ForcedTool(name=...)` naming one of the tools, which the model must call. `parallel_tool_calls=False` limits a response to one call; by default both providers allow several. Both need `tools`, and a `ForcedTool` naming no tool of the request, or parallel calls with `NONE`, is refused before sending.
-- **The calls.** `response.tool_calls` lists the calls as `ToolCall`s: `id`, `name` and `arguments`, the JSON text the model wrote. `parse_arguments()` gives the object and raises `ValueError` for text that is not one, which a model can write without `strict`; it does not check the object against `parameters`. `parse_arguments(Model)` validates it with a Pydantic model as well and returns the model, or raises the model's `ValidationError` (a `ValueError`), so a tool never runs with arguments it does not take, `strict` or not (see below). A response with calls has finished normally (`incomplete_reason` is `None`) and waits for their results. When it stopped early, at the token limit for example, its last call may be cut off: `to_turn()` raises `ValueError` then, so retry with a higher `max_output_tokens` instead of running the calls.
-- **The results.** `response.to_turn()` is the model's turn of calls, a `ToolCallTurn`, and a `ToolResult(call_id=call.id, output=...)` answers each call, in the order you like, right after it. `output` is text: describe a failure in it, since OpenAI has no error flag. Before sending, every adapter checks the order both providers require and raises `RequestValidationError` for a call without its result, a result without its call, or a turn between them.
-- **Reasoning comes back.** The turn of calls keeps the response's own output (`ToolCallTurn.native`, from `GenerationResponse.native`): OpenAI's reasoning items, Anthropic's thinking with its signature. The same provider gets it back whole, so the model goes on from its own reasoning instead of thinking again. A turn from another provider sends only the shared calls and text. With OpenAI's `store: False`, its reasoning items carry their content only when the call asks for it: `provider_options={"store": False, "include": ["reasoning.encrypted_content"]}`.
-- **Streaming.** `stream(...)` yields, for each call, a `ToolCallStartEvent` (`call_id`, `name`), `ToolCallDeltaEvent`s with pieces of the arguments and a `ToolCallDoneEvent` with the whole `ToolCall`, before the response ends, so a tool can start early. That event says the call is whole, not that the generation succeeded: the stream can still fail after it (an error event, a cut connection) and then raises that error instead of ending with a `CompletedEvent`. Start early only a tool that is safe to run for a failed generation, such as one that only reads, and run a tool with side effects after the `CompletedEvent`, from its `tool_calls` (see the example below). `events.final()` gives the `CompletedEvent` with `tool_calls`, and its `to_turn()` continues the conversation as `response.to_turn()` does.
-- **Not shared.** OpenAI's built-in tools (web search, file search, code interpreter, MCP, ...), Anthropic's server tools, results with images or files, and the providers' own tool fields (such as Anthropic's `cache_control`) are reached through the provider's own methods, `CreateResponse` and `CreateMessage`. There is no runner that calls your functions for you: the loop above is yours to shape (how many rounds, what to do with a failing tool, whether to run calls in parallel).
+## Define a callable tool
 
-For a callable, `Tool.from_callable(function, description=..., strict=...)`
-uses its name, parameter annotations, and docstring to create the tool
-definition. Pass `description=` to override the docstring and `strict=` to
-choose strictness. The exported `@tool` decorator wraps a function and exposes
-its generated definition as `.tool`, while preserving its metadata and direct
-calling interface. It generates the definition once. `Tool.from_callable`
-also accepts a decorated function and returns its definition or a copy with
-description and strictness overrides. Neither API runs the callable; your
-request loop still invokes it for a model call. Strict mode follows the
-schema requirements above.
+`@tool` wraps a function without changing how you call it in Python. Its
+cached `Tool` definition is generated from the function name, parameter
+annotations and docstring. Pass the callable itself as `tools=get_weather` or
+include it in a sequence such as `tools=[get_weather, get_time]`; there is no
+need to write `get_weather.tool` or construct a `GenerationRequest`.
+
+The same keyword fields are accepted by `generation.create()` and
+`generation.stream()`. They build a `GenerationRequest` internally. Pass a
+ready `GenerationRequest` only when you already have one or want to reuse it;
+do not pass both a request and request fields.
+
+An undecorated callable is accepted too, but its schema is generated when the
+request is built. Decorate reusable functions once to cache their schema.
+`Tool.from_callable()` returns a callback-bearing `Tool` definition;
+`Tool.from_model()` and `Tool(...)` define a schema without a callback.
+`Tool.from_model()` is useful when you want to validate arguments as a
+Pydantic model and dispatch the call yourself.
+
+On the wire, a tool definition has a `name`, an optional `description`, a
+`parameters` JSON Schema object, and an optional `strict` flag. Names may use
+letters, digits, `_` and `-`, are limited to 128 characters, and must be
+unique within the request. The schema is sent as written; each provider may
+support only part of JSON Schema.
+
+`Tool.from_callable(function, description=..., strict=...)` uses the
+function's name, parameter annotations and docstring; `description=`
+overrides the docstring. `@tool(description=..., strict=...)` provides the
+same options and exposes the cached definition as `.tool`. Neither executes
+the function while defining it.
+
+## Manual buffered workflow
+
+The first example sends a request with a callable tool. When the model returns
+calls, `response.to_turn()` adds its turn to the conversation and each
+`ToolResult` answers one call. The next `create()` continues that conversation.
+The `while` loop is yours to bound; a production agent should set a maximum
+number of rounds and decide what to do if a tool fails.
+
+`ToolCall.parse_arguments()` without an argument parses JSON into an object
+but does not validate it against the tool schema. Pass the callable or a
+Pydantic model to validate: for a callable it returns `(args, kwargs)`, and
+for a model it returns the validated model. `strict=True` asks the provider to
+enforce the schema too; local validation is still useful when strict mode is
+off.
+
+`ToolResult.output` is text. Serialize non-string results as JSON. To report a
+tool failure, put an error description in the output; there is no separate
+error flag. The adapters check that every call has exactly one result, in
+order, before sending the next request.
+
+`response.to_turn()` preserves the provider's native output alongside the
+shared calls and text. This lets the same provider continue with its own
+reasoning data; another provider receives only the shared conversation.
+If `incomplete_reason` is set, do not run the calls: the last call may be
+truncated and `to_turn()` refuses to continue that response.
+
+## Choose calls
+
+`tool_choice` accepts `ToolChoice.AUTO` (the default), `ToolChoice.NONE`,
+`ToolChoice.REQUIRED`, or `ForcedTool(name=...)` to require one named tool.
+`parallel_tool_calls=False` limits the response to one call; both providers
+allow several by default. These options require `tools`; a forced name not in
+the request and `parallel_tool_calls` with `ToolChoice.NONE` are rejected
+before sending.
+
+With `strict=True`, the generated schema must have
+`additionalProperties: false` and list every property in `required`;
+otherwise the providers return 400. Without `strict=True`, neither provider
+requests strict schema adherence.
+
+## Automatic callback runner
+
+The runner is available on a concrete provider resource such as
+`OpenAIClient.generation.tool_runner`. It does not belong to the generic
+`IGenerationResource` protocol, which guarantees only `create()` and
+`stream()`. The runner invokes registered callbacks and packages their
+results, but it does not send the next model request; append the response turn
+and results, then call generation again as in this example.
+
+`tool_runner.create()` waits for the full response and returns an async
+iterator. The callback execution starts when the iterator is consumed, not
+when `create()` returns. It binds and validates every call before running the
+first callback; an unknown tool, invalid arguments or missing callback
+therefore fails without running any callback. Callbacks then run sequentially
+in response order. An exception from a callback or JSON serialization
+propagates and stops iteration; any earlier callbacks have already run.
+Synchronous callbacks run inline; use async callbacks or explicitly offload
+blocking work.
+
+The response is available as `.original`. An incomplete response has no
+results and does not invoke callbacks; inspect `incomplete_reason` before
+trying to continue it. Strings returned by callbacks become `ToolResult.output`
+as-is; other values are encoded with `json.dumps()` and must be JSON
+serializable.
+
+```python title="tools_runner.py"
+from typing import Any
+
+from aiollm import GenerationResponse, InputItem, Turn, tool
+from aiollm.providers.openai import OpenAIClient
+
+
+@tool
+def get_weather(city: str) -> dict[str, str | int]:
+    """Get the current weather in a city."""
+    return {"city": city, "celsius": 15}
+
+
+async def ask_with_runner(
+    client: OpenAIClient, question: str
+) -> GenerationResponse[Any]:
+    conversation: list[InputItem] = [Turn.user(question)]
+    while True:
+        calls = await client.generation.tool_runner.create(
+            model="gpt-6-astra",
+            input=conversation,
+            tools=get_weather,
+        )
+        response = calls.original
+        if response.incomplete_reason is not None or not response.tool_calls:
+            return response
+        conversation.append(response.to_turn())
+        conversation.extend([result async for result in calls])
+```
+
+`tool_runner.stream()` is an async context manager. It yields the generation's
+events, then yields `ToolResult`s only after a successful `CompletedEvent`.
+Consume it to exhaustion to receive the results. If the stream fails or ends
+early, callbacks are not run; an incomplete `CompletedEvent` is yielded but
+produces no results. As with `create()`, the caller decides whether to continue
+the conversation. Only append `completed.to_turn()` when the completion is
+not incomplete; a truncated tool turn cannot be continued.
+
+This example runs one streamed round and returns its completion and results.
+The caller can append `completed.to_turn()` followed by the results before
+the next generation call.
+
+```python title="tools_runner_stream.py"
+from typing import Any
+
+from aiollm import CompletedEvent, InputItem, ToolResult, tool
+from aiollm.providers.openai import OpenAIClient
+
+
+@tool
+def get_weather(city: str) -> dict[str, str | int]:
+    """Get the current weather in a city."""
+    return {"city": city, "celsius": 15}
+
+
+@tool
+def get_time() -> str:
+    """Get the current time."""
+    return "3 PM"
+
+
+async def stream_round(
+    client: OpenAIClient, conversation: list[InputItem]
+) -> tuple[CompletedEvent[Any], list[ToolResult]]:
+    completed: CompletedEvent[Any] | None = None
+    results: list[ToolResult] = []
+    async with client.generation.tool_runner.stream(
+        model="gpt-6-astra",
+        input=conversation,
+        tools=[get_weather, get_time],
+    ) as events:
+        async for event in events:
+            if isinstance(event, CompletedEvent):
+                completed = event
+            elif isinstance(event, ToolResult):
+                results.append(event)
+    if completed is None:
+        raise RuntimeError("The stream ended without a completed event")
+    return completed, results
+```
 
 A tool can take its arguments from a Pydantic model: `Tool.from_model(name, Model, ...)` sends the model's JSON Schema as `parameters`, and `parse_arguments(Model)` gives the arguments back as the model. For `strict=True`, the model forbids extra fields and has no defaults, since the providers want `additionalProperties: false` and every property required:
 
@@ -83,11 +251,22 @@ def answer(call: ToolCall) -> ToolResult:
     except ValidationError as error:
         output = json.dumps({"error": str(error)})
     else:
-        output = get_weather(arguments.city)
+        output = json.dumps(get_weather(arguments.city))
     return ToolResult(call_id=call.id, output=output)
 ```
 
 A streamed call can start a tool before the response ends. Start that way only the tools that are safe to run for a generation that then fails, and run the others once the stream has ended with its `CompletedEvent`:
+
+`generation.stream()` emits `ToolCallStartEvent`, argument
+`ToolCallDeltaEvent`s and `ToolCallDoneEvent` as the model writes a call.
+`ToolCallDoneEvent` means that call's arguments are complete, not that the
+generation succeeded: the stream can still fail before `CompletedEvent`.
+`events.final()` returns the terminal event after iteration and preserves the
+provider output for `completed.to_turn()`.
+
+The example starts only a read-only callback early. Cancelling its asyncio task
+does not stop work already running in `asyncio.to_thread`, so work started
+early must remain safe even if the generation later fails.
 
 ```python title="tools_stream.py"
 import asyncio
@@ -99,7 +278,9 @@ READ_ONLY = {"get_weather"}
 
 def run(call: ToolCall) -> str:
     if call.name == "get_weather":
-        return get_weather(str(call.parse_arguments()["city"]))
+        args, kwargs = call.parse_arguments(get_weather)
+        result = get_weather(*args, **kwargs)
+        return result if isinstance(result, str) else json.dumps(result)
     return json.dumps({"error": f"unknown tool {call.name}"})
 
 
@@ -109,7 +290,7 @@ async def stream_round(
     early: dict[str, asyncio.Task[str]] = {}
     try:
         async with client.generation.stream(
-            model="gpt-6-astra", input=conversation, tools=[get_weather.tool]
+            model="gpt-6-astra", input=conversation, tools=get_weather
         ) as events:
             async for event in events:
                 if (
@@ -131,5 +312,14 @@ async def stream_round(
         results.append(ToolResult(call_id=call.id, output=output))
     return [*conversation, *results]
 ```
+
+## Provider-specific tools
+
+The shared callable workflow covers function tools defined by your
+application. Provider-hosted tools and their result formats are not shared:
+for example, OpenAI web search or file search and Anthropic server tools must
+be sent through the providers' own `CreateResponse` or `CreateMessage`
+methods. `tool_runner` executes callbacks attached to shared `Tool`
+definitions; it does not execute provider-hosted tools.
 
 What each field becomes for each provider is listed in [Shared field mapping](../unification.md).
