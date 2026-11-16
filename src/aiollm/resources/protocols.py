@@ -19,7 +19,6 @@ from aiollm.types.requests.generation import (
 )
 from aiollm.types.responses.base import BaseResponse
 from aiollm.types.responses.events import BaseResponseEvent, GenerationEvent
-from aiollm.types.responses.generation import GenerationResponse
 
 if TYPE_CHECKING:
     from aiollm.enums import Effort, ToolChoice
@@ -30,8 +29,9 @@ if TYPE_CHECKING:
         ForcedTool,
         InputItem,
         JSONSchema,
-        Tool,
+        ToolType,
     )
+    from aiollm.types.responses.generation import GenerationResponse
 
 
 class ISessionAccess(Protocol):
@@ -112,7 +112,7 @@ class IGenerationAdapter[
     ICompositeAdapter[
         GenerationRequest,
         RawT,
-        GenerationResponse[RawT],
+        "GenerationResponse[RawT]",
         RawItemT,
         GenerationEvent[RawItemT],
     ],
@@ -174,7 +174,7 @@ class IGenerationResource[RawT, RawItemT](IResource, Protocol):
         end_user_id: str | MISSING = MISSING,
         effort: Effort | MISSING = MISSING,
         output_schema: JSONSchema | MISSING = MISSING,
-        tools: list[Tool] | MISSING = MISSING,
+        tools: ToolType | Sequence[ToolType] | MISSING = MISSING,
         tool_choice: ToolChoice | ForcedTool | MISSING = MISSING,
         parallel_tool_calls: bool | MISSING = MISSING,
         **options: Unpack[CallOptions],
@@ -227,7 +227,7 @@ class IGenerationResource[RawT, RawItemT](IResource, Protocol):
         end_user_id: str | MISSING = MISSING,
         effort: Effort | MISSING = MISSING,
         output_schema: JSONSchema | MISSING = MISSING,
-        tools: list[Tool] | MISSING = MISSING,
+        tools: ToolType | Sequence[ToolType] | MISSING = MISSING,
         tool_choice: ToolChoice | ForcedTool | MISSING = MISSING,
         parallel_tool_calls: bool | MISSING = MISSING,
         **options: Unpack[CallOptions],
@@ -291,3 +291,33 @@ class IGenerationClient[RawT = Any, RawItemT = Any](IClient, Protocol):
     def generation(self) -> IGenerationResource[RawT, RawItemT]:
         """Shared text generation over the provider's API."""
         ...
+
+
+def make_request(
+    request: GenerationRequest | None,
+    fields: dict[str, Any],
+) -> GenerationRequest:
+    """Take the request of a call, given ready or as fields.
+
+    Args:
+        request: The ready request, if one was given.
+        fields: The keyword arguments of the call.
+
+    Returns:
+        The request to send.
+
+    Raises:
+        TypeError: Both a request and fields are given.
+        ValidationError: The fields do not make a valid request, e.g. a
+            field name is misspelled.
+    """
+    if request is None:
+        return GenerationRequest(**fields)
+    if fields:
+        names = ", ".join(sorted(fields))
+        message = (
+            "Pass either a GenerationRequest or its fields as keyword "
+            f"arguments, not both (got the request and {names})"
+        )
+        raise TypeError(message)
+    return request

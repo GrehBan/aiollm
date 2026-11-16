@@ -141,6 +141,8 @@ SHARED_GENERATION: Final = "shared_generation.py"
 GENERATION_PARTS: Final = "generation_parts.py"
 PROVIDER_OPTIONS: Final = "provider_options.py"
 TOOLS: Final = "tools.py"
+TOOLS_RUNNER: Final = "tools_runner.py"
+TOOLS_RUNNER_STREAM: Final = "tools_runner_stream.py"
 TOOLS_STREAM: Final = "tools_stream.py"
 TOOLS_MODEL: Final = "tools_model.py"
 RESOURCES: Final = "resources.py"
@@ -169,6 +171,8 @@ TESTED: Final = (
     GENERATION_PARTS,
     PROVIDER_OPTIONS,
     TOOLS,
+    TOOLS_RUNNER,
+    TOOLS_RUNNER_STREAM,
     TOOLS_STREAM,
     TOOLS_MODEL,
     RESOURCES,
@@ -994,6 +998,67 @@ async def test_tools(
             "call_id": "call_1",
             "output": '{"city": "Paris", "celsius": 15}',
         },
+    ]
+
+
+async def test_tools_runner(
+    examples: Examples,
+    recorder: Recorder,
+    api: LocalAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await examples.run(QUICK_START, TOOLS_RUNNER)
+    monkeypatch.setattr(session_factory, "api", api)
+    call = {
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_1",
+        "name": "get_weather",
+        "arguments": '{"city": "Paris"}',
+        "status": "completed",
+    }
+    recorder.reply(
+        Reply(json=openai_response(output=[call])),
+        Reply(json=openai_response(output=[openai_message("15 C in Paris")])),
+    )
+
+    async with OpenAIClient("sk-...") as client:
+        response = await examples.ask_with_runner(client, "Weather in Paris?")
+
+    assert response.text == "15 C in Paris"
+    assert json.loads(recorder.requests[1].body)["input"] == [
+        {"role": "user", "content": "Weather in Paris?"},
+        call,
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": '{"city": "Paris", "celsius": 15}',
+        },
+    ]
+
+
+async def test_tools_runner_stream(
+    examples: Examples,
+    recorder: Recorder,
+    api: LocalAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await examples.run(QUICK_START, TOOLS_RUNNER_STREAM)
+    monkeypatch.setattr(session_factory, "api", api)
+    recorder.reply(sse(openai_called_stream()))
+
+    async with OpenAIClient("sk-...") as client:
+        completed, results = await examples.stream_round(
+            client, [Turn.user("Weather in Paris?")]
+        )
+
+    assert [call.name for call in completed.tool_calls] == [
+        "get_weather",
+        "get_time",
+    ]
+    assert [(result.call_id, result.output) for result in results] == [
+        ("call_1", '{"city": "Paris", "celsius": 15}'),
+        ("call_2", "3 PM"),
     ]
 
 

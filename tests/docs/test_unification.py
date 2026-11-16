@@ -105,7 +105,10 @@ def documented(owner: str) -> set[str]:
     ids=lambda model: model.__name__,
 )
 def test_every_shared_field_has_a_row(model: type[BaseModel]) -> None:
-    assert documented(model.__name__) == set(model.model_fields)
+    assert documented(model.__name__) == {
+        field.serialization_alias or name
+        for name, field in model.model_fields.items()
+    }
 
 
 STOP_FIELDS = ("incomplete_reason", "raw_incomplete_reason", "refusal")
