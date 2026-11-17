@@ -132,11 +132,23 @@ and results, then call generation again as in this example.
 iterator. The callback execution starts when the iterator is consumed, not
 when `create()` returns. It binds and validates every call before running the
 first callback; an unknown tool, invalid arguments or missing callback
-therefore fails without running any callback. Callbacks then run sequentially
-in response order. An exception from a callback or JSON serialization
-propagates and stops iteration; any earlier callbacks have already run.
-Synchronous callbacks run inline; use async callbacks or explicitly offload
-blocking work.
+therefore fails without running any callback. Set `concurrency` on
+`tool_runner.create()` or `tool_runner.stream()` to limit how many callbacks
+run at once; it defaults to `1`, preserving sequential execution. Results
+are yielded in tool-call order even when callbacks finish in a different
+order, and each result keeps its matching `call_id`.
+
+When a callback or JSON serialization fails, the runner cancels unfinished
+callbacks and propagates the failure as soon as it observes it. If multiple
+failures are observed together, the first one in tool-call order is
+propagated. A callback or consumer `CancelledError` is treated as cancellation:
+unfinished callbacks are cancelled and awaited before it propagates. Callbacks
+already started may have performed side effects before cancellation. If
+buffered results are only partially consumed, call `await calls.aclose()` to
+cancel and wait for unfinished callbacks. The streaming context closes its
+callbacks when the context exits. Synchronous callbacks run inline and do not
+overlap; use async callbacks or explicitly offload blocking work to benefit
+from concurrency.
 
 The response is available as `.original`. An incomplete response has no
 results and does not invoke callbacks; inspect `incomplete_reason` before
@@ -166,6 +178,7 @@ async def ask_with_runner(
             model="gpt-6-astra",
             input=conversation,
             tools=get_weather,
+            concurrency=4,
         )
         response = calls.original
         if response.incomplete_reason is not None or not response.tool_calls:
@@ -214,6 +227,7 @@ async def stream_round(
         model="gpt-6-astra",
         input=conversation,
         tools=[get_weather, get_time],
+        concurrency=2,
     ) as events:
         async for event in events:
             if isinstance(event, CompletedEvent):

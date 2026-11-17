@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
@@ -11,7 +12,7 @@ from pydantic import MISSING, ValidationError
 
 from aiollm.enums import IncompleteReason, Provider
 from aiollm.resources.generation import GenerationResource
-from aiollm.resources.tool_runner import Callback, ToolRunner
+from aiollm.resources.tool_runner import Callback, CallbackRunner, ToolRunner
 from aiollm.types.requests.generation import (
     GenerationRequest,
     Tool,
@@ -504,4 +505,503 @@ async def test_stream_propagates_tool_callback_errors() -> None:
             await anext(stream)
 
     assert caught.value is error
+    assert resource.stream_exits == 1
+
+
+async def test_stream_callback_failure_cancels_running_callbacks() -> None:
+    waiting_started = asyncio.Event()
+    failing_started = asyncio.Event()
+    waiting_cancelled = asyncio.Event()
+    error = RuntimeError("callback failed")
+
+    @tool
+    async def wait_forever() -> str:
+        waiting_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            waiting_cancelled.set()
+        return "unreachable"
+
+    @tool
+    async def fail() -> str:
+        failing_started.set()
+        raise error
+
+    calls = [
+        ToolCall(id="call-1", name="wait_forever", arguments="{}"),
+        ToolCall(id="call-2", name="fail", arguments="{}"),
+    ]
+    completed = CompletedEvent(
+        provider=Provider.GENERIC,
+        model="model-1",
+        tool_calls=calls,
+        raw={},
+    )
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[wait_forever.tool, fail.tool],
+    )
+    resource = FakeGenerationResource(response_with_tools(calls), [completed])
+    runner = make_runner(resource)
+
+    async with runner.stream(request, concurrency=2) as stream:
+        assert await anext(stream) is completed
+        pending = asyncio.create_task(anext(stream))
+        await asyncio.wait_for(failing_started.wait(), timeout=1)
+        with pytest.raises(RuntimeError) as caught:
+            await pending
+
+    assert caught.value is error
+    assert waiting_started.is_set()
+    assert waiting_cancelled.is_set()
+    assert resource.stream_exits == 1
+
+
+async def test_invalid_concurrency_fails_before_request() -> None:
+    @tool
+    def lookup() -> str:
+        return "value"
+
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[lookup.tool],
+    )
+    resource = FakeGenerationResource(response_with_tools([]))
+    runner = make_runner(resource)
+
+    with pytest.raises(ValueError, match="concurrency must be greater than 0"):
+        await runner.create(request, concurrency=0)
+
+    with pytest.raises(ValueError, match="concurrency must be greater than 0"):
+        async with runner.stream(request, concurrency=0):
+            pytest.fail("invalid concurrency opened a stream")
+
+    assert resource.create_calls == []
+    assert resource.stream_calls == []
+
+
+async def test_callback_runner_concurrency_sets_the_scheduling_window() -> (
+    None
+):
+    active = 0
+    peak_active = 0
+    two_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def callback() -> str:
+        nonlocal active, peak_active
+        active += 1
+        peak_active = max(peak_active, active)
+        if active == 2:
+            two_started.set()
+        try:
+            await release.wait()
+        finally:
+            active -= 1
+        return "done"
+
+    calls = {str(index): Callback(callback, (), {}) for index in range(3)}
+    runner = CallbackRunner(calls, concurrency=2)
+    first = asyncio.create_task(anext(runner))
+
+    try:
+        await asyncio.wait_for(two_started.wait(), timeout=0.1)
+    finally:
+        release.set()
+
+    results = [await first, await anext(runner), await anext(runner)]
+
+    assert peak_active == 2
+    assert [result.call_id for result in results] == ["0", "1", "2"]
+
+
+async def test_callback_runner_defaults_to_sequential_execution() -> None:
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def first() -> str:
+        first_started.set()
+        await release_first.wait()
+        return "first"
+
+    async def second() -> str:
+        second_started.set()
+        return "second"
+
+    runner = CallbackRunner(
+        {
+            "first": Callback(first, (), {}),
+            "second": Callback(second, (), {}),
+        }
+    )
+    first_result = asyncio.create_task(anext(runner))
+    await asyncio.wait_for(first_started.wait(), timeout=1)
+
+    assert not second_started.is_set()
+
+    release_first.set()
+    assert (await first_result).call_id == "first"
+    assert (await anext(runner)).call_id == "second"
+    assert second_started.is_set()
+
+
+async def test_callback_runner_supports_async_iteration_and_empty_calls() -> (
+    None
+):
+    empty_results = [result async for result in CallbackRunner({})]
+
+    async def lookup() -> str:
+        return "value"
+
+    results = [
+        result
+        async for result in CallbackRunner(
+            {"call-1": Callback(lookup, (), {})}
+        )
+    ]
+
+    assert empty_results == []
+    assert results == [ToolResult(call_id="call-1", output="value")]
+
+
+async def test_callback_runner_cannot_be_entered_after_close() -> None:
+    runner = CallbackRunner({})
+    await runner.aclose()
+    await runner.aclose()
+
+    with pytest.raises(RuntimeError, match="CallbackRunner is closed"):
+        await runner.aenter()
+
+    with pytest.raises(StopAsyncIteration):
+        await anext(runner)
+
+
+async def test_create_runs_callbacks_concurrently_and_keeps_call_ids() -> None:
+    first_started = asyncio.Event()
+    second_finished = asyncio.Event()
+    release_first = asyncio.Event()
+    second_task: asyncio.Task[Any] | None = None
+
+    @tool
+    async def first() -> str:
+        first_started.set()
+        await release_first.wait()
+        return "first-result"
+
+    @tool
+    async def second() -> str:
+        nonlocal second_task
+        second_task = asyncio.current_task()
+        second_finished.set()
+        return "second-result"
+
+    calls = [
+        ToolCall(id="call-1", name="first", arguments="{}"),
+        ToolCall(id="call-2", name="second", arguments="{}"),
+    ]
+    response = response_with_tools(calls)
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[first.tool, second.tool],
+    )
+    iterator = await make_runner(FakeGenerationResource(response)).create(
+        request,
+        concurrency=2,
+    )
+    first_result = asyncio.create_task(anext(iterator))
+
+    try:
+        await asyncio.wait_for(second_finished.wait(), timeout=1)
+        assert second_task is not None
+        await second_task
+        await asyncio.sleep(0)
+        assert first_started.is_set()
+        assert not first_result.done()
+    finally:
+        release_first.set()
+
+    results = [await first_result, await anext(iterator)]
+
+    assert results == [
+        ToolResult(call_id="call-1", output="first-result"),
+        ToolResult(call_id="call-2", output="second-result"),
+    ]
+
+
+async def test_stream_runs_callbacks_concurrently_and_keeps_call_ids() -> None:
+    second_finished = asyncio.Event()
+    release_first = asyncio.Event()
+    second_task: asyncio.Task[Any] | None = None
+
+    @tool
+    async def first() -> str:
+        await release_first.wait()
+        return "first-result"
+
+    @tool
+    async def second() -> str:
+        nonlocal second_task
+        second_task = asyncio.current_task()
+        second_finished.set()
+        return "second-result"
+
+    calls = [
+        ToolCall(id="call-1", name="first", arguments="{}"),
+        ToolCall(id="call-2", name="second", arguments="{}"),
+    ]
+    completed = CompletedEvent(
+        provider=Provider.GENERIC,
+        model="model-1",
+        tool_calls=calls,
+        raw={},
+    )
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[first.tool, second.tool],
+    )
+    resource = FakeGenerationResource(response_with_tools(calls), [completed])
+    runner = make_runner(resource)
+
+    async with runner.stream(request, concurrency=2) as stream:
+        assert await anext(stream) is completed
+        first_result = asyncio.create_task(anext(stream))
+        try:
+            await asyncio.wait_for(second_finished.wait(), timeout=1)
+            assert second_task is not None
+            await second_task
+            await asyncio.sleep(0)
+            assert not first_result.done()
+        finally:
+            release_first.set()
+
+        results = [await first_result, await anext(stream)]
+
+    assert results == [
+        ToolResult(call_id="call-1", output="first-result"),
+        ToolResult(call_id="call-2", output="second-result"),
+    ]
+
+
+async def test_create_callback_failure_cancels_running_callbacks() -> None:
+    waiting_started = asyncio.Event()
+    failing_started = asyncio.Event()
+    waiting_cancelled = asyncio.Event()
+    error = RuntimeError("callback failed")
+
+    @tool
+    async def wait_forever() -> str:
+        waiting_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            waiting_cancelled.set()
+        return "unreachable"
+
+    @tool
+    async def fail() -> str:
+        failing_started.set()
+        raise error
+
+    calls = [
+        ToolCall(id="call-1", name="wait_forever", arguments="{}"),
+        ToolCall(id="call-2", name="fail", arguments="{}"),
+    ]
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[wait_forever.tool, fail.tool],
+    )
+    iterator = await make_runner(
+        FakeGenerationResource(response_with_tools(calls))
+    ).create(request, concurrency=2)
+    pending = asyncio.create_task(anext(iterator))
+
+    try:
+        await asyncio.wait_for(failing_started.wait(), timeout=1)
+        with pytest.raises(RuntimeError) as caught:
+            await pending
+    finally:
+        await iterator.aclose()
+
+    assert caught.value is error
+    assert waiting_started.is_set()
+    assert waiting_cancelled.is_set()
+
+
+async def test_callback_cancellation_cancels_running_callbacks() -> None:
+    waiting_started = asyncio.Event()
+    waiting_cancelled = asyncio.Event()
+    cancellation_started = asyncio.Event()
+
+    @tool
+    async def wait_forever() -> str:
+        waiting_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            waiting_cancelled.set()
+        return "unreachable"
+
+    @tool
+    async def cancel() -> str:
+        cancellation_started.set()
+        raise asyncio.CancelledError
+
+    calls = [
+        ToolCall(id="call-1", name="wait_forever", arguments="{}"),
+        ToolCall(id="call-2", name="cancel", arguments="{}"),
+    ]
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[wait_forever.tool, cancel.tool],
+    )
+    iterator = await make_runner(
+        FakeGenerationResource(response_with_tools(calls))
+    ).create(request, concurrency=2)
+    pending = asyncio.create_task(anext(iterator))
+
+    try:
+        await asyncio.wait_for(cancellation_started.wait(), timeout=1)
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    finally:
+        await iterator.aclose()
+
+    assert waiting_started.is_set()
+    assert waiting_cancelled.is_set()
+
+
+async def test_create_aclose_waits_for_callback_cancellation() -> None:
+    two_started = asyncio.Event()
+    callback_tasks: list[asyncio.Task[Any]] = []
+    active = 0
+
+    @tool
+    async def wait_forever(index: int) -> str:
+        nonlocal active
+        task = asyncio.current_task()
+        assert task is not None
+        callback_tasks.append(task)
+        active += 1
+        if active == 2:
+            two_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            active -= 1
+        return str(index)
+
+    calls = [
+        ToolCall(
+            id=f"call-{index}",
+            name="wait_forever",
+            arguments=f'{{"index": {index}}}',
+        )
+        for index in range(3)
+    ]
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[wait_forever.tool],
+    )
+    iterator = await make_runner(
+        FakeGenerationResource(response_with_tools(calls))
+    ).create(request, concurrency=2)
+    pending = asyncio.create_task(anext(iterator))
+    await asyncio.wait_for(two_started.wait(), timeout=1)
+
+    await iterator.aclose()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert active == 0
+    assert len(callback_tasks) == 2
+    assert all(task is not None and task.done() for task in callback_tasks)
+
+
+async def test_buffered_close_before_iteration_prevents_callbacks() -> None:
+    executed: list[str] = []
+
+    @tool
+    def lookup() -> str:
+        executed.append("lookup")
+        return "value"
+
+    call = ToolCall(id="call-1", name="lookup", arguments="{}")
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[lookup.tool],
+    )
+    iterator = await make_runner(
+        FakeGenerationResource(response_with_tools([call]))
+    ).create(request)
+
+    await iterator.aclose()
+    results = [result async for result in iterator]
+
+    assert results == []
+    assert executed == []
+
+
+async def test_stream_context_exit_waits_for_callback_cancellation() -> None:
+    two_started = asyncio.Event()
+    callback_tasks: list[asyncio.Task[Any]] = []
+    active = 0
+
+    @tool
+    async def wait_forever(index: int) -> str:
+        nonlocal active
+        task = asyncio.current_task()
+        assert task is not None
+        callback_tasks.append(task)
+        active += 1
+        if active == 2:
+            two_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            active -= 1
+        return str(index)
+
+    calls = [
+        ToolCall(
+            id=f"call-{index}",
+            name="wait_forever",
+            arguments=f'{{"index": {index}}}',
+        )
+        for index in range(3)
+    ]
+    completed = CompletedEvent(
+        provider=Provider.GENERIC,
+        model="model-1",
+        tool_calls=calls,
+        raw={},
+    )
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[wait_forever.tool],
+    )
+    resource = FakeGenerationResource(response_with_tools(calls), [completed])
+    runner = make_runner(resource)
+
+    async with runner.stream(request, concurrency=2) as stream:
+        assert await anext(stream) is completed
+        pending = asyncio.create_task(anext(stream))
+        await asyncio.wait_for(two_started.wait(), timeout=1)
+
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert active == 0
+    assert len(callback_tasks) == 2
+    assert all(task is not None and task.done() for task in callback_tasks)
     assert resource.stream_exits == 1

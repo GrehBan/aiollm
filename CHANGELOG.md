@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.11.2] - 2026-11-17
+
+### Added
+
+- Allow limiting callback concurrency in buffered and streaming tool runners
+  while preserving sequential execution by default.
+
 ## [0.11.1] - 2026-11-16
 
 ### Added
@@ -1167,7 +1174,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/GrehBan/aiollm/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/GrehBan/aiollm/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/GrehBan/aiollm/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/GrehBan/aiollm/compare/v0.9.0...v0.10.0
