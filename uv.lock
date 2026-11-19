@@ -216,7 +216,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-codegen = [{ name = "aiollm-codegen", git = "https://github.com/GrehBan/aiollm_codegen?rev=e1171eaef36db7cbc05d74b17b8e2cbbbbdf1a84" }]
+codegen = [{ name = "aiollm-codegen", git = "https://github.com/GrehBan/aiollm_codegen?rev=c33ba116c402622341d25f834b6f0f74517cfdab" }]
 dev = [
     { name = "mypy", specifier = ">=2.4.0" },
     { name = "pre-commit", specifier = ">=4.7.0" },
@@ -248,7 +248,7 @@ test = [
 [[package]]
 name = "aiollm-codegen"
 version = "0.1.0"
-source = { git = "https://github.com/GrehBan/aiollm_codegen?rev=e1171eaef36db7cbc05d74b17b8e2cbbbbdf1a84#e1171eaef36db7cbc05d74b17b8e2cbbbbdf1a84" }
+source = { git = "https://github.com/GrehBan/aiollm_codegen?rev=c33ba116c402622341d25f834b6f0f74517cfdab#c33ba116c402622341d25f834b6f0f74517cfdab" }
 dependencies = [
     { name = "datamodel-code-generator" },
     { name = "pydantic" },

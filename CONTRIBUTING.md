@@ -58,8 +58,8 @@ src/aiollm/
 ├── adapters/           adapters between shared types and provider methods
 ├── resources/          GenerationResource, use cases and AdapterUseCase orchestrators
 └── providers/
-    ├── anthropic/      AnthropicClient and the Messages API: methods/, types/, adapters/
-    └── openai/         OpenAIClient and the Responses API: methods/, types/, adapters/
+    ├── anthropic/      AnthropicClient, the Messages and Files APIs: methods/, types/, adapters/
+    └── openai/         OpenAIClient, the Responses and Files APIs: methods/, types/, adapters/
 ```
 
 The packages are layers, listed from the bottom up; a module imports only from the layers below it. Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/` (every provider against shared scenarios and the upstream schemas), `tests/typing/` (static checks of the public API) and `tests/docs/` (the examples of these pages).

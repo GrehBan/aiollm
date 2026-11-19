@@ -14,8 +14,11 @@ OpenAI's types come from its official OpenAPI file at the commit of
 ``OPENAI_OPENAPI_SHA256`` (the file of the contract snapshot,
 ``tests/providers/contracts/manifest.json``, a test checks), or from the
 file ``OPENAI_OPENAPI`` names, which must be the same; restricted to
-``createResponse``. Anthropic's come from the docs-lite contract snapshot
-in ``tests/providers/contracts/anthropic/messages``. To follow a new
+``OPENAI_OPERATIONS``. Anthropic's come from the docs-lite contract
+snapshot in ``tests/providers/contracts/anthropic/messages`` and, for the
+Files API, which docs-lite does not cover, from
+``tests/providers/contracts/sources/anthropic-files.openapi.json``, a
+transcription of Anthropic's API reference. To follow a new
 OpenAI file, refresh the contract snapshot from it and change the URL
 and the hash here together.
 
@@ -55,6 +58,19 @@ OPENAI_OPENAPI_SHA256: Final = (
     "cf91be897ab55e4aefcfc44ec1eb7611eea1227509b67178be583244c2680ab3"
 )
 """SHA-256 of that file."""
+
+OPENAI_OPERATIONS: Final = (
+    "createResponse",
+    "createFile",
+    "listFiles",
+    "retrieveFile",
+    "deleteFile",
+    "downloadFile",
+)
+"""The operations of OpenAI's file the library implements."""
+
+ANTHROPIC_FILES: Final = CONTRACTS / "sources" / "anthropic-files.openapi.json"
+"""Anthropic's Files API, transcribed from its API reference."""
 
 HAND_WRITTEN_TYPES = {"options.py"}
 """Modules of ``types/`` the script never replaces."""
@@ -186,8 +202,11 @@ def main() -> None:
             codegen_dir,
             str(openapi),
             "--package",
-            "--operation",
-            "createResponse",
+            *(
+                argument
+                for operation in OPENAI_OPERATIONS
+                for argument in ("--operation", operation)
+            ),
             output=out / "openai",
         )
         codegen(
@@ -196,6 +215,8 @@ def main() -> None:
             "--package",
             "--contract",
             "/messages",
+            "--merge",
+            str(ANTHROPIC_FILES),
             "--header",
             f"anthropic-version={ANTHROPIC_VERSION}",
             output=out / "anthropic",
