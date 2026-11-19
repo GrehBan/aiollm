@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.13.0] - 2026-11-19
+
+### Added
+
+- OpenAI's and Anthropic's Files APIs: `CreateFile`, `ListFiles`,
+  `RetrieveFile`, `DeleteFile` and `DownloadFile` in each provider's
+  `methods`, with their generated types (`OpenAIFile`, `FileMetadata`, the
+  list and deletion results) and request parameters. Upload a file once and
+  refer to it by id in later requests instead of sending its base64 each
+  time. An upload is never retried, since `POST /files` is not idempotent;
+  listing returns one page per call; `DownloadFile` streams the content
+  (`Stream.save(path)`). See the new
+  [Provider files](https://grehban.github.io/aiollm/guide/files/) guide.
+- `client.files` on `OpenAIClient` and `AnthropicClient`: the same `upload`,
+  `retrieve`, `list`, `delete` and `download` for every provider, in shared
+  types. An upload returns a `StoredFile` (`ref`, `filename`, `size`,
+  `created_at`, `expires_at` in UTC, the provider's metadata in `raw`), and its
+  `ref`, a `ProviderFile`, goes into the new third source of `ImagePart` and
+  `DocumentPart`, `file=`, so a request carries the file's id instead of its
+  base64. A `ProviderFile` of another provider raises `RequestValidationError`
+  before anything is sent. `list()` goes through every page; OpenAI's
+  uploads are `user_data` files unless
+  `provider_options={"purpose": ...}` (the new `OpenAIFileOptions`) says
+  otherwise. New public names: `FilesResource`, `IFilesResource`,
+  `IFilesClient`, `IFilesAdapter`, `BaseFilesAdapter`, `OpenAIFilesAdapter`,
+  `AnthropicFilesAdapter`, `FileUpload`, `ProviderFile`, `StoredFile`.
+
+### Changed
+
+- **Breaking:** a dict (or a model) in a `FORM` or `MULTIPART` body is now sent
+  as one field per key with the key in brackets,
+  `expires_after[anchor]=created_at`, nested dicts likewise, as OpenAI's upload
+  reads it; it was sent as one JSON-encoded field, which OpenAI refuses with a
+  400. A list inside a dict, or a dict inside a list, now raises `TypeError`,
+  since the form cannot keep its boundaries, and the session's `json_dumps`
+  is no longer used for forms. To keep sending a JSON-encoded field, declare
+  it as `str` and pass `json.dumps(value)`.
+
 ## [0.12.1] - 2026-11-19
 
 ### Fixed
@@ -1245,7 +1283,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/GrehBan/aiollm/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/GrehBan/aiollm/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/GrehBan/aiollm/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/GrehBan/aiollm/compare/v0.11.1...v0.11.2
