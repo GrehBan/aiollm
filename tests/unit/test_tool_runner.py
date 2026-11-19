@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+import threading
+from collections.abc import AsyncGenerator, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
 
@@ -1145,3 +1146,107 @@ async def test_cancelling_the_consumer_cancels_running_callbacks() -> None:
     assert cancelled.is_set()
     with pytest.raises(StopAsyncIteration):
         await anext(runner)
+
+
+async def test_sync_callbacks_run_in_worker_threads() -> None:
+    loop_thread = threading.get_ident()
+    release = threading.Event()
+    threads: list[int] = []
+
+    def wait_for_release() -> str:
+        threads.append(threading.get_ident())
+        assert release.wait(timeout=1)
+        return "released"
+
+    async def set_release() -> str:
+        await asyncio.sleep(0)
+        release.set()
+        return "set"
+
+    calls = {
+        "call-1": Callback(wait_for_release, (), {}),
+        "call-2": Callback(set_release, (), {}),
+    }
+    results = [result async for result in iterate(calls, concurrency=2)]
+
+    assert [result.output for result in results] == ["released", "set"]
+    assert threads and threads[0] != loop_thread
+
+
+async def test_sync_callbacks_overlap_up_to_the_concurrency() -> None:
+    barrier = threading.Barrier(2, timeout=1)
+
+    def meet(name: str) -> str:
+        barrier.wait()
+        return name
+
+    calls = {
+        name: Callback(meet, (name,), {}) for name in ("call-1", "call-2")
+    }
+    results = [result async for result in iterate(calls, concurrency=2)]
+
+    assert [result.output for result in results] == ["call-1", "call-2"]
+
+
+class AsyncCallable:
+    """An object whose ``__call__`` is a coroutine function."""
+
+    def __init__(self) -> None:
+        self.thread: int | None = None
+
+    async def __call__(self) -> str:
+        self.thread = threading.get_ident()
+        return "called"
+
+
+async def test_async_callables_run_in_the_event_loop() -> None:
+    callable_object = AsyncCallable()
+
+    async def coroutine() -> str:
+        return "awaited"
+
+    def returns_coroutine() -> Coroutine[Any, Any, str]:
+        return coroutine()
+
+    calls = {
+        "call-1": Callback(callable_object, (), {}),
+        "call-2": Callback(returns_coroutine, (), {}),
+    }
+    results = [result async for result in iterate(calls)]
+
+    assert callable_object.thread == threading.get_ident()
+    assert [result.output for result in results] == ["called", "awaited"]
+
+
+async def test_a_cancelled_sync_callback_reports_its_late_failure() -> None:
+    loop = asyncio.get_running_loop()
+    reported: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _, context: reported.append(context))
+    started = threading.Event()
+    release = threading.Event()
+    late_error = OSError("late failure")
+
+    def fail_late() -> str:
+        started.set()
+        assert release.wait(timeout=1)
+        raise late_error
+
+    runner = iterate({"call-1": Callback(fail_late, (), {})})
+    consumer = asyncio.create_task(anext(runner))
+    try:
+        await asyncio.to_thread(started.wait, 1)
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        assert reported == []
+    finally:
+        release.set()
+        await runner.aclose()
+
+    for _ in range(100):
+        if reported:
+            break
+        await asyncio.sleep(0.01)
+    loop.set_exception_handler(None)
+
+    assert [context["exception"] for context in reported] == [late_error]

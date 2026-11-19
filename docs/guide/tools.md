@@ -159,8 +159,15 @@ and wait for unfinished callbacks; closing raises the failures recorded so far,
 unless the block is already raising an exception, which then takes precedence.
 An iteration still waiting in another task ends with `StopAsyncIteration`. The
 streaming context closes its callbacks the same way when it exits.
-Synchronous callbacks run inline and do not overlap; use async callbacks or
-explicitly offload blocking work to benefit from concurrency.
+Async callbacks (`async def`, or an object whose `__call__` is one) run in the
+event loop. Any other callback runs in a worker thread (`asyncio.to_thread`),
+so a blocking one does not stop the loop, and with `concurrency` above `1`
+synchronous callbacks run at the same time: they must then be thread-safe, and
+an object bound to the thread that made it (an `sqlite3` connection, for
+example) must be used from an `async def` callback instead. A thread cannot be
+stopped: a cancelled synchronous callback runs to its end after the runner has
+closed, and a failure it then ends with is reported through the event loop's
+exception handler.
 
 The response is available as `.original`. An incomplete response has no
 results and does not invoke callbacks; inspect `incomplete_reason` before

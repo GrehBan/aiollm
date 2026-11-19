@@ -22,6 +22,7 @@ from pydantic import MISSING
 
 from aiollm.resources.protocols import make_request
 from aiollm.session.protocols import CallOptions, ISession, Timeout
+from aiollm.types.files import ThreadWork
 from aiollm.types.requests.generation import (
     GenerationRequest,
     NoProviderOptions,
@@ -114,11 +115,41 @@ class Callback:
         return cls(callback=callback, args=args, kwargs=kwargs)
 
     async def __call__(self) -> Any:
-        """Invoke the bound callback, awaiting it if awaitable."""
-        result = self.callback(*self.args, **self.kwargs)
+        """Invoke the bound callback and return what it produced.
+
+        An async callback runs in the event loop. Any other runs in a
+        worker thread, so a blocking callback does not stop the loop; a
+        thread cannot be stopped, so a cancelled one runs to its end and
+        a failure it then ends with goes to the loop's exception handler
+        (``ThreadWork``). An awaitable it returns is awaited in the loop.
+
+        Returns:
+            The callback's result.
+        """
+        if _is_async(self.callback):
+            result = self.callback(*self.args, **self.kwargs)
+        else:
+            result = await ThreadWork().run(
+                self.callback, *self.args, **self.kwargs
+            )
         if inspect.isawaitable(result):
             return await result
         return result
+
+
+def _is_async(callback: Callable[..., Any]) -> bool:
+    """Tell whether a callback is an async function or async callable.
+
+    Args:
+        callback: A tool's callback.
+
+    Returns:
+        ``True`` for an ``async def`` function, a partial of one, or an
+        object whose ``__call__`` is one.
+    """
+    return inspect.iscoroutinefunction(
+        callback
+    ) or inspect.iscoroutinefunction(type(callback).__call__)
 
 
 def bind_callbacks(
