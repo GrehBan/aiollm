@@ -21,11 +21,11 @@ from typing import Any, cast
 from urllib.parse import parse_qsl
 
 import pytest
-from aiohttp import BytesPayload, FormData
+from aiohttp import BytesPayload, FormData, MultipartWriter, hdrs
 
 from aiollm.enums import BodyFormat
 from aiollm.http.exceptions.transport import APIRequestError
-from aiollm.serialization.json import JsonDumps, dumps, loads
+from aiollm.serialization.json import JsonDumps, loads
 from aiollm.serialization.protocols import IValueFormatter
 from aiollm.serialization.traversal import MAX_DEPTH
 from aiollm.serialization.values import BaseValueFormatter
@@ -199,18 +199,21 @@ def test_json_uses_the_custom_encoder() -> None:
     [math.nan, math.inf, -math.inf, [{"x": math.nan}]],
     ids=["nan", "inf", "-inf", "nested"],
 )
-@pytest.mark.parametrize(
-    "body_format",
-    [BodyFormat.JSON, BodyFormat.FORM],
-    ids=["json", "form-mapping"],
-)
 def test_non_finite_floats_are_rejected(
     builder: AiohttpBodyBuilder,
     value: Any,
-    body_format: BodyFormat,
 ) -> None:
     with pytest.raises(ValueError, match="NaN and infinity"):
-        build(builder, {"meta": {"v": value}}, body_format, ISO)
+        build(builder, {"meta": {"v": value}}, BodyFormat.JSON, ISO)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf], ids=["nan", "inf"])
+def test_non_finite_floats_in_form_mappings_are_rejected(
+    builder: AiohttpBodyBuilder,
+    value: float,
+) -> None:
+    with pytest.raises(ValueError, match="'meta\\[v\\]' cannot send NaN"):
+        build(builder, {"meta": {"v": value}}, BodyFormat.FORM, ISO)
 
 
 @pytest.mark.parametrize(
@@ -218,18 +221,12 @@ def test_non_finite_floats_are_rejected(
     [{1, 2}, decimal.Decimal("1.5"), 2**64, {1: "a"}],
     ids=["set", "decimal", "big-int", "int-key"],
 )
-@pytest.mark.parametrize(
-    "body_format",
-    [BodyFormat.JSON, BodyFormat.FORM],
-    ids=["json", "form-mapping"],
-)
 def test_unsupported_json_values_are_rejected(
     builder: AiohttpBodyBuilder,
     value: Any,
-    body_format: BodyFormat,
 ) -> None:
     with pytest.raises(TypeError, match="cannot be encoded as JSON"):
-        build(builder, {"meta": {"v": value}}, body_format, ISO)
+        build(builder, {"meta": {"v": value}}, BodyFormat.JSON, ISO)
 
 
 def test_missing_upload_file_is_rejected(
@@ -354,17 +351,63 @@ def test_text_stream_is_rejected(
         build(builder, {"f": io.StringIO("text")}, body_format, ISO)
 
 
-def test_binary_data_inside_form_mapping_is_rejected(
+def test_a_file_inside_a_form_mapping_is_a_bracketed_part(
     builder: AiohttpBodyBuilder,
 ) -> None:
-    with pytest.raises(TypeError, match="cannot be sent as JSON"):
+    form = form_of(
         build(builder, {"meta": {"raw": b"x"}}, BodyFormat.MULTIPART, ISO)
+    )
+
+    writer = form()
+    assert isinstance(writer, MultipartWriter)
+    (part,) = (payload for payload, *_ in writer)
+    disposition = part.headers[hdrs.CONTENT_DISPOSITION]
+    assert disposition.startswith('form-data; name="meta[raw]"')
+
+
+def test_form_mappings_send_bracketed_keys(
+    builder: AiohttpBodyBuilder,
+) -> None:
+    # OpenAI's upload reads expires_after[anchor], not a JSON string.
+    body = {
+        "expires_after": {"anchor": "created_at", "seconds": 3600},
+        "outer": {"inner": {"on": True}, Color.RED: 1},
+        "empty": {},
+    }
+
+    form = form_of(build(builder, body, BodyFormat.FORM, ISO))
+
+    assert urlencoded(form) == [
+        ("expires_after[anchor]", "created_at"),
+        ("expires_after[seconds]", "3600"),
+        ("outer[inner][on]", "true"),
+        ("outer[red]", "1"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("value", "error", "match"),
+    [
+        ({"k": [1, 2]}, TypeError, "'meta\\[k\\]' cannot send a list"),
+        ({"k": {"deep": [1]}}, TypeError, "'meta\\[k\\]\\[deep\\]'"),
+        ({"k": None}, ValueError, "'meta\\[k\\]' cannot send None"),
+    ],
+    ids=["list", "deep-list", "none"],
+)
+def test_form_mappings_it_cannot_express_are_rejected(
+    builder: AiohttpBodyBuilder,
+    value: dict[str, Any],
+    error: type[Exception],
+    match: str,
+) -> None:
+    with pytest.raises(error, match=match):
+        build(builder, {"meta": value}, BodyFormat.MULTIPART, ISO)
 
 
 def test_form_field_encoding(builder: AiohttpBodyBuilder) -> None:
     body = {
         "tags": ["a", "b"],
-        "meta": {"k": [1, True], "color": Color.RED},
+        "meta": {"k": 1, "color": Color.RED},
         "on": True,
         "off": False,
         "n": 5,
@@ -377,7 +420,8 @@ def test_form_field_encoding(builder: AiohttpBodyBuilder) -> None:
     assert urlencoded(form) == [
         ("tags", "a"),
         ("tags", "b"),
-        ("meta", dumps({"k": [1, True], "color": "red"}).decode()),
+        ("meta[k]", "1"),
+        ("meta[color]", "red"),
         ("on", "true"),
         ("off", "false"),
         ("n", "5"),
@@ -386,12 +430,12 @@ def test_form_field_encoding(builder: AiohttpBodyBuilder) -> None:
     ]
 
 
-def test_custom_json_dumps_for_form_mappings() -> None:
+def test_forms_do_not_use_the_json_encoder() -> None:
     builder = AiohttpBodyBuilder(json_dumps=lambda value: b"<json>")
 
     form = form_of(build(builder, {"meta": {"a": 1}}, BodyFormat.FORM, ISO))
 
-    assert urlencoded(form) == [("meta", "<json>")]
+    assert urlencoded(form) == [("meta[a]", "1")]
 
 
 @pytest.mark.parametrize(

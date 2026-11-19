@@ -124,8 +124,7 @@ class AiohttpBodyBuilder:
         """Create the builder.
 
         Args:
-            json_dumps: Encoder for JSON bodies and for mappings sent
-                inside form fields.
+            json_dumps: Encoder for JSON bodies.
             normalizer: Value normalizer; a default one is used when
                 ``None``.
         """
@@ -298,14 +297,19 @@ class AiohttpBodyBuilder:
         formatter: IValueFormatter,
         uploads: AsyncExitStack,
         multipart: bool,
+        *,
+        nested: bool = False,
     ) -> None:
         """Add one body field to the form.
 
-        Lists add the field once per item, files become file parts,
-        mappings are sent as JSON strings and other values by the rule of
+        Lists add the field once per item, files become file parts, a
+        mapping adds one field per key with the key in brackets
+        (``expires_after[anchor]``, nested mappings too, as OpenAI's
+        upload reads them) and other values are sent by the rule of
         ``scalar_text`` (booleans as ``"true"``/``"false"``). A field the
         method leaves out is not in the body; ``None`` has no form
-        encoding and is refused.
+        encoding and is refused, and so is a list inside a mapping, for
+        which bracket encodings disagree.
 
         Args:
             form: The form being built.
@@ -314,11 +318,12 @@ class AiohttpBodyBuilder:
             formatter: The method's ``value_formatter``.
             uploads: The stack the upload readers are registered on.
             multipart: Whether the form is multipart.
+            nested: Whether the field is a key of a mapping.
 
         Raises:
             TypeError: If a file is added to a non-multipart form, a
-                mapping cannot be encoded as JSON, or a list contains a
-                list, which a repeated field would flatten.
+                list contains a list, which a repeated field would
+                flatten, or a mapping contains a list.
             ValueError: If a value is NaN or infinite, or the value is
                 ``None`` or a list contains it, which a form field cannot
                 express.
@@ -332,15 +337,13 @@ class AiohttpBodyBuilder:
             raise ValueError(message)
 
         if isinstance(value, (list, tuple)):
-            for item in value:
-                if item is None:
-                    message = f"Form field {key!r} cannot send None in a list"
-                    raise ValueError(message)
-                if isinstance(item, (list, tuple)):
-                    message = f"Form field {key!r} cannot send nested lists"
-                    raise TypeError(message)
-
-                self._add_field(form, key, item, formatter, uploads, multipart)
+            if nested:
+                message = (
+                    f"Form field {key!r} cannot send a list inside a "
+                    "mapping: bracket encodings of it disagree"
+                )
+                raise TypeError(message)
+            self._add_list(form, key, value, formatter, uploads, multipart)
             return
 
         file = InputFile.from_value(value)
@@ -353,14 +356,56 @@ class AiohttpBodyBuilder:
             return
 
         if isinstance(value, Mapping):
-            self._check_json(value)
-            form.add_field(key, self._dumps(value).decode("utf-8"))
+            for name, item in value.items():
+                self._add_field(
+                    form,
+                    f"{key}[{name}]",
+                    item,
+                    formatter,
+                    uploads,
+                    multipart,
+                    nested=True,
+                )
             return
 
         form.add_field(
             key,
             scalar_text(value, formatter, label=f"Form field {key!r}"),
         )
+
+    def _add_list(
+        self,
+        form: FormData,
+        key: str,
+        items: list[Any] | tuple[Any, ...],
+        formatter: IValueFormatter,
+        uploads: AsyncExitStack,
+        multipart: bool,
+    ) -> None:
+        """Add a list as one field per item.
+
+        Args:
+            form: The form being built.
+            key: Field name.
+            items: Normalized items.
+            formatter: The method's ``value_formatter``.
+            uploads: The stack the upload readers are registered on.
+            multipart: Whether the form is multipart.
+
+        Raises:
+            TypeError: If an item is a list, which a repeated field would
+                flatten.
+            ValueError: If an item is ``None``.
+        """
+        for item in items:
+            if item is None:
+                message = f"Form field {key!r} cannot send None in a list"
+                raise ValueError(message)
+            if isinstance(item, (list, tuple)):
+                message = f"Form field {key!r} cannot send nested lists"
+                raise TypeError(message)
+
+            self._add_field(form, key, item, formatter, uploads, multipart)
 
     @staticmethod
     def _add_file(
