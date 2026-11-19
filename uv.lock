@@ -204,7 +204,7 @@ test = [
 requires-dist = [
     { name = "aiodns", specifier = ">=4.0.4" },
     { name = "aiohttp", specifier = ">=3.14.5" },
-    { name = "aiopulse", git = "https://github.com/GrehBan/aiopulse?rev=88eb54b2857bf8300701fa1912c9a9efe6f5c9b1" },
+    { name = "aiopulse", git = "https://github.com/GrehBan/aiopulse?rev=3cdba8849744a81d39bcbd4c4b45419d7383e68e" },
     { name = "brotli", specifier = ">=1.2.1" },
     { name = "certifi", specifier = ">=2026.10.23" },
     { name = "multidict", specifier = ">=7.2.1" },
@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "aiopulse"
 version = "0.0.4"
-source = { git = "https://github.com/GrehBan/aiopulse?rev=88eb54b2857bf8300701fa1912c9a9efe6f5c9b1#88eb54b2857bf8300701fa1912c9a9efe6f5c9b1" }
+source = { git = "https://github.com/GrehBan/aiopulse?rev=3cdba8849744a81d39bcbd4c4b45419d7383e68e#3cdba8849744a81d39bcbd4c4b45419d7383e68e" }
 dependencies = [
     { name = "typing-extensions" },
 ]

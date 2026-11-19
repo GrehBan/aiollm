@@ -746,6 +746,50 @@ async def test_every_failure_observed_is_in_the_group() -> None:
     assert [failure.index for failure in caught.value.failures] == [0, 1]
 
 
+async def test_a_failure_lets_cancelled_callbacks_finish_cleanup() -> None:
+    error = RuntimeError("callback failed")
+    waiting = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup: list[str] = []
+
+    async def fail() -> str:
+        await waiting.wait()
+        raise error
+
+    async def clean_up_slowly() -> str:
+        waiting.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup.append("interrupted")
+                raise
+            cleanup.append("finished")
+        return "unreachable"
+
+    calls = {
+        "call-1": Callback(clean_up_slowly, (), {}),
+        "call-2": Callback(fail, (), {}),
+    }
+    runner = iterate(calls, concurrency=2)
+    consumer = asyncio.create_task(anext(runner))
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert not consumer.done()
+    release_cleanup.set()
+    with pytest.raises(CallbackExceptionGroup) as caught:
+        await consumer
+
+    assert caught.value.exceptions == (error,)
+    assert cleanup == ["finished"]
+
+
 async def test_create_runs_callbacks_concurrently_and_keeps_call_ids() -> None:
     first_started = asyncio.Event()
     second_finished = asyncio.Event()
