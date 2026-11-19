@@ -64,6 +64,7 @@ async def all_file_ids(client: OpenAIClient) -> list[str]:
 - **A file for a model is `user_data`.** `purpose` is required; `user_data` is the purpose for files given to a model as input, and works with the Responses API.
 - **`expires_after` is sent key by key.** A multipart form has no nested values, and OpenAI refuses the object as one JSON-encoded field (400); the form spells it out as `expires_after[anchor]` and `expires_after[seconds]` (see [Request body](methods.md#request-body)).
 - **One page per call.** Ask for the next page with `after=page.last_id` while `page.has_more` is true.
+- **A `user_data` file cannot be downloaded.** `DownloadFile` of one raises `BadRequestError` (400, with no error code; checked live); OpenAI lets only some purposes be downloaded.
 
 ## Anthropic
 
@@ -126,7 +127,7 @@ async def download(client: AnthropicClient, file_id: str, target: Path) -> int:
         return await content.save(target)
 ```
 
-- **Pages by cursor.** Pass `page.next_page` as `page` while it is not `None`. `ListFiles(ids=[...])` asks for up to 100 files by id in one page, sent as repeated `ids[]`; it cannot be combined with `page` or `limit`, and an id that names no file is left out.
+- **Pages by cursor.** Pass `page.next_page` as `page` while it is not `None`. `ListFiles(ids=[...])` asks for up to 100 files by id in one page, sent as repeated `ids[]`; it cannot be combined with `page` or `limit`, and the id of a deleted or unknown file is left out, while an id that is not a valid file id fails the whole request with `BadRequestError` (`ids[]: invalid id`, checked live).
 - **Only files a tool made can be downloaded.** A file is `downloadable` when code execution or a skill created it; downloading any other raises `BadRequestError` with `code == "file_not_downloadable"`, and an expired file raises `NotFoundError`. `DownloadFile` returns a `Stream[bytes]`: `save(path)` writes it to a file without holding it in memory.
 - **The version is part of the method.** Every Files method sends `anthropic-version` (`VERSION_HEADERS`), like `CreateMessage`.
 - **Where the schemas come from.** Anthropic's documentation snapshot the library is generated from has no request schemas for Files, so they are a transcription of Anthropic's live API reference, kept with its URLs and the date it was read in `tests/providers/contracts/sources/anthropic-files.openapi.json`.
