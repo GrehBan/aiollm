@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import inspect
 import json
-from asyncio import FIRST_COMPLETED, CancelledError, Task, TaskGroup, wait
-from collections import deque
 from collections.abc import (
     AsyncGenerator,
     Callable,
@@ -19,6 +17,7 @@ from contextlib import (
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self, Unpack, overload
 
+from aiopulse import CallbackExecutor, invoke
 from pydantic import MISSING
 
 from aiollm.resources.protocols import make_request
@@ -31,6 +30,11 @@ from aiollm.types.requests.generation import (
 from aiollm.types.responses.events import CompletedEvent, GenerationEvent
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from types import TracebackType
+
+    from aiopulse.callback import CallbackInvocation
+
     from aiollm.enums import Effort, ToolChoice
     from aiollm.http.protocols import HeadersType
     from aiollm.resources.generation import GenerationResource
@@ -72,12 +76,6 @@ def _serialize_tool_output(result: Any) -> str:
     if isinstance(result, str):
         return result
     return json.dumps(result)
-
-
-@dataclass(frozen=True, slots=True)
-class _CallbackOutcome:
-    result: ToolResult | None = None
-    error: Exception | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -148,213 +146,66 @@ def bind_callbacks(
     return callbacks
 
 
-class CallbackRunner:
-    """Run callbacks concurrently and yield results in input order.
+@invoke
+async def _run_tool(call_id: str, callback: Callback) -> ToolResult:
+    """Run one bound callback and wrap its output as the call's result.
 
-    At most ``concurrency`` callbacks are scheduled at once. Results are
-    yielded in the original mapping order, regardless of completion order.
-    When a callback failure is observed, the remaining tasks are cancelled
-    and the exception is propagated. If multiple failures are observed
-    together, the first one in input order is propagated. Cancellation from
-    either the consumer or a callback cancels all pending tasks before it
-    propagates.
+    Args:
+        call_id: The tool call the result answers.
+        callback: The bound callback.
 
-    A runner is single-use. It closes itself once the mapping is exhausted
-    and every result has been yielded, or when an error or cancellation
-    occurs.
-
-    Example:
-        >>> runner = CallbackRunner(calls, concurrency=4)
-        >>> async for result in runner:
-        ...     handle(result)
+    Returns:
+        The callback's output, serialized, under ``call_id``.
     """
+    return ToolResult(
+        call_id=call_id,
+        output=_serialize_tool_output(await callback()),
+    )
 
-    def __init__(
-        self,
-        calls: Mapping[str, Callback],
-        concurrency: int = 1,
-    ) -> None:
-        """Initialize the runner.
 
-        Args:
-            calls: Mapping of call ID to async callback. Iterated lazily,
-                in insertion order.
-            concurrency: Maximum number of callbacks executing at the
-                same time. Defaults to ``1``.
+def _invocations(
+    calls: Mapping[str, Callback],
+) -> Iterator[CallbackInvocation[..., ToolResult]]:
+    """Turn bound callbacks into invocations for the executor, in order.
 
-        Raises:
-            ValueError: If ``concurrency`` is less than 1.
-        """
-        _check_concurrency(concurrency)
+    Args:
+        calls: Bound callbacks keyed by tool call ID.
 
-        self._calls = iter(calls.items())
+    Yields:
+        One invocation per call, producing that call's ``ToolResult``.
+    """
+    for call_id, callback in calls.items():
+        yield _run_tool(call_id, callback)
 
-        self._concurrency = concurrency
-        self._task_group = TaskGroup()
-        self._entered = False
-        self._closed = False
-        self._exhausted = False
-        self._pending: deque[Task[_CallbackOutcome]] = deque()
 
-    def __aiter__(self) -> Self:
-        """Return the runner itself as the async iterator."""
-        return self
+def _executor(
+    calls: Mapping[str, Callback],
+    concurrency: int,
+) -> CallbackExecutor[ToolResult]:
+    """Make the executor that runs the callbacks of one response.
 
-    async def __anext__(self) -> ToolResult:
-        """Return the next result in input order.
+    Results come in tool-call order, and the first failure cancels the
+    callbacks still running.
 
-        Lazily enters the task group, fills the bounded task window, and
-        waits for callback completion while preserving input order.
+    Args:
+        calls: Bound callbacks keyed by tool call ID.
+        concurrency: Maximum number of callbacks executing at once.
 
-        Returns:
-            The ``ToolResult`` of the next callback.
-
-        Raises:
-            StopAsyncIteration: When all results have been yielded or the
-                runner is already closed.
-            CancelledError: If the consumer or a callback is cancelled; the
-                runner is closed before re-raising.
-            Exception: Any exception raised by a callback; the runner is
-                closed before re-raising.
-        """
-        if self._closed:
-            raise StopAsyncIteration
-
-        await self.aenter()
-        self._schedule()
-
-        if not self._pending:
-            await self.aclose()
-            raise StopAsyncIteration from None
-
-        try:
-            task = self._pending[0]
-            while True:
-                pending = tuple(self._pending)
-                done, _ = await wait(
-                    pending,
-                    return_when=FIRST_COMPLETED,
-                )
-                outcomes = [
-                    (completed, completed.result())
-                    for completed in pending
-                    if completed in done
-                ]
-                failure = next(
-                    (
-                        outcome.error
-                        for _, outcome in outcomes
-                        if outcome.error is not None
-                    ),
-                    None,
-                )
-                if failure is not None:
-                    await self.aclose()
-                    raise failure
-
-                if task in done:
-                    outcome = next(
-                        outcome
-                        for completed, outcome in outcomes
-                        if completed is task
-                    )
-                    break
-        except CancelledError:
-            await self.aclose()
-            raise
-
-        self._pending.popleft()
-        self._schedule()
-
-        if not self._pending and self._exhausted:
-            await self.aclose()
-
-        assert outcome.result is not None
-        return outcome.result
-
-    def _schedule(self) -> None:
-        """Fill the task window up to the configured concurrency.
-
-        Pulls callbacks from the iterator and creates tasks in the task
-        group. Sets ``_exhausted`` once the iterator runs out.
-        """
-        while len(self._pending) < self._concurrency:
-            try:
-                call_id, callback = next(self._calls)
-            except StopIteration:
-                self._exhausted = True
-                return
-
-            task = self._task_group.create_task(
-                self.run_callback(call_id, callback)
-            )
-            self._pending.append(task)
-
-    async def run_callback(
-        self,
-        call_id: str,
-        callback: Callback,
-    ) -> _CallbackOutcome:
-        """Execute a single callback and package its result or failure.
-
-        Non-cancellation exceptions are captured rather than raised, so a
-        failing callback does not tear down the task group. The consumer
-        detects and re-raises the first failure from ``__anext__``.
-
-        Args:
-            call_id: Identifier attached to the resulting ``ToolResult``.
-            callback: Async callable to execute.
-
-        Returns:
-            An outcome holding either the serialized ``ToolResult`` or the
-            captured exception.
-        """
-        try:
-            output = await callback()
-            result = ToolResult(
-                call_id=call_id,
-                output=_serialize_tool_output(output),
-            )
-        except Exception as exc:
-            return _CallbackOutcome(error=exc)
-        return _CallbackOutcome(result=result)
-
-    async def aenter(self) -> None:
-        """Enter the underlying task group. Idempotent.
-
-        Called automatically on first iteration; call it manually only if
-        you need the group started earlier.
-        """
-        if self._closed:
-            raise RuntimeError("CallbackRunner is closed")
-        if self._entered:
-            return
-        await self._task_group.__aenter__()
-        self._entered = True
-
-    async def aclose(self) -> None:
-        """Cancel pending tasks and close the runner. Idempotent.
-
-        Cancels every pending task, then exits the task group, which waits
-        for the cancelled tasks to finish. Safe to call multiple times;
-        subsequent iteration raises ``StopAsyncIteration``.
-        """
-        if self._closed:
-            return
-
-        self._closed = True
-
-        while self._pending:
-            task = self._pending.popleft()
-            task.cancel()
-
-        if self._entered:
-            await self._task_group.__aexit__(None, None, None)
-
-        self._pending.clear()
+    Returns:
+        The executor, not entered yet.
+    """
+    return CallbackExecutor(_invocations(calls), concurrency=concurrency)
 
 
 def _check_concurrency(concurrency: int) -> None:
+    """Refuse a concurrency limit below one, before anything is sent.
+
+    Args:
+        concurrency: The requested limit.
+
+    Raises:
+        ValueError: ``concurrency`` is less than ``1``.
+    """
     if concurrency < 1:
         raise ValueError("concurrency must be greater than 0")
 
@@ -362,12 +213,15 @@ def _check_concurrency(concurrency: int) -> None:
 class ToolRunnerIterator[RawT]:
     """Single-use async iterator executing tool callbacks for response.
 
-    Wraps a :class:`CallbackRunner` and exposes its results through the
-    async iterator protocol. The original generation response is available
-    through ``original``.
+    Runs the callbacks through an ``aiopulse.CallbackExecutor`` and yields
+    their results in tool-call order, regardless of completion order. The
+    generation response is available through ``original``. Use it with
+    ``async with`` to cancel and await unfinished callbacks when leaving
+    early.
 
-    Results are yielded in the order of the input mapping, regardless of
-    callback completion order. The first callback failure is propagated.
+    Callback failures are raised together in one
+    ``CallbackExceptionGroup``; a cancellation the runner did not request
+    is one of them, as a ``CallbackCancelledError``.
     """
 
     def __init__(
@@ -390,65 +244,77 @@ class ToolRunnerIterator[RawT]:
         """
         _check_concurrency(concurrency)
         self.original = original
-        self._calls = calls
-        self._concurrency = concurrency
-        self._runner: CallbackRunner | None = None
-        self._closed = False
+        self._executor = _executor(calls, concurrency)
 
     def __aiter__(self) -> Self:
-        """Return this iterator, initializing the callback runner if needed.
-
-        The runner is created lazily and is not replaced on subsequent
-        calls, ensuring that iteration remains single-use.
+        """Return this iterator.
 
         Returns:
             This iterator instance.
         """
-        if self._runner is None and not self._closed:
-            self._runner = CallbackRunner(
-                self._calls,
-                concurrency=self._concurrency,
-            )
         return self
 
     async def __anext__(self) -> ToolResult:
         """Execute callbacks and return the next tool result.
 
-        Results are yielded in the input mapping's order, regardless of
-        callback completion order.
-
         Returns:
             The next tool result.
 
         Raises:
-            StopAsyncIteration: When all callbacks have been executed and
-                their results have been yielded, or the iterator is closed.
-            Exception: An exception raised by a callback, propagated after
-                the runner has been closed.
-            CancelledError: If the current task is cancelled. The runner
-                is closed before cancellation is propagated.
+            StopAsyncIteration: When every result has been yielded, or the
+                iterator is closed.
+            CallbackExceptionGroup: The callback failures, after the
+                unfinished callbacks have been cancelled.
+            CancelledError: If the current task is cancelled; the
+                unfinished callbacks are cancelled first.
         """
-        if self._closed:
-            raise StopAsyncIteration
+        return await anext(self._executor)
 
-        if self._runner is None:
-            self.__aiter__()
+    async def __aenter__(self) -> Self:
+        """Start the callbacks' task group in the current task.
 
-        assert self._runner is not None
-        return await anext(self._runner)
+        Returns:
+            This iterator instance.
+        """
+        await self._executor.aenter()
+        return self
 
-    async def aclose(self) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Cancel and await unfinished callbacks when leaving the block.
+
+        Args:
+            exc_type: Type of the exception raised in the block, if any.
+            exc: The exception raised in the block, if any; it takes
+                precedence over callback failures.
+            tb: Its traceback.
+
+        Raises:
+            CallbackExceptionGroup: Callback failures recorded so far,
+                when the block raised nothing.
+        """
+        await self.aclose(exc)
+
+    async def aclose(self, exc: BaseException | None = None) -> None:
         """Close the iterator and cancel any pending callbacks.
 
-        Waits for cancelled callback tasks to finish and releases resources
-        held by the underlying runner.
+        Waits for cancelled callback tasks to finish. Safe to call before
+        iteration starts or multiple times; after closing, iteration
+        raises ``StopAsyncIteration``.
 
-        Safe to call before iteration starts or multiple times.
-        After closing, further iteration raises ``StopAsyncIteration``.
+        Args:
+            exc: An exception the caller is already raising; recorded
+                callback failures are then dropped in its favour.
+
+        Raises:
+            CallbackExceptionGroup: Callback failures recorded so far, when
+                ``exc`` is ``None``.
         """
-        self._closed = True
-        if self._runner is not None:
-            await self._runner.aclose()
+        await self._executor.aclose(exc)
 
 
 class ToolStreamRunnerIterator[RawItemT]:
@@ -456,8 +322,8 @@ class ToolStreamRunnerIterator[RawItemT]:
 
     Wraps a generation stream and forwards its events to the consumer.
     After the stream completes successfully, tool callbacks are executed
-    through a :class:`CallbackRunner`, and their results are yielded in
-    the original tool call order.
+    through an ``aiopulse.CallbackExecutor``, and their results are yielded
+    in the original tool call order.
 
     The underlying generation stream is opened lazily during iteration.
     """
@@ -485,7 +351,7 @@ class ToolStreamRunnerIterator[RawItemT]:
         self.original = original
         self.tools = tools
         self._concurrency = concurrency
-        self._runner: CallbackRunner | None = None
+        self._runner: CallbackExecutor[ToolResult] | None = None
 
         self._stream: GenerationStream[RawItemT] | None = None
         self._completed: CompletedEvent[Any] | None = None
@@ -574,10 +440,7 @@ class ToolStreamRunnerIterator[RawItemT]:
                 raise
 
             callbacks = bind_callbacks(completed.tool_calls, self.tools)
-            self._runner = CallbackRunner(
-                callbacks,
-                concurrency=self._concurrency,
-            )
+            self._runner = _executor(callbacks, self._concurrency)
             return None
         except BaseException as exc:
             self._closed = True
@@ -603,7 +466,9 @@ class ToolStreamRunnerIterator[RawItemT]:
             StopAsyncIteration: When the generation stream and all tool
                 callbacks have been exhausted, or the iterator is closed.
             Exception: An exception raised while reading the generation
-                stream, binding tool calls, or executing callbacks.
+                stream or binding tool calls.
+            CallbackExceptionGroup: The callback failures, after the
+                unfinished callbacks have been cancelled.
             CancelledError: If the current task is cancelled.
         """
         if self._closed:
@@ -635,11 +500,16 @@ class ToolStreamRunnerIterator[RawItemT]:
         Cancels pending callback tasks and waits for their termination.
         Also exits the original stream context manager if it is still active.
 
+        Safe to call multiple times.
+
         Args:
             exc: Exception that caused the iterator to close, if any.
-                Forwarded to the original context manager's ``__aexit__``.
+                Forwarded to the original context manager's ``__aexit__``;
+                recorded callback failures are dropped in its favour.
 
-        Safe to call multiple times.
+        Raises:
+            CallbackExceptionGroup: Callback failures recorded so far, when
+                ``exc`` is ``None``.
         """
         if self._finalized:
             return
@@ -648,7 +518,7 @@ class ToolStreamRunnerIterator[RawItemT]:
         self._finalized = True
         try:
             if self._runner is not None:
-                await self._runner.aclose()
+                await self._runner.aclose(exc)
         finally:
             await self._exit_original(exc)
 
@@ -735,7 +605,8 @@ class ToolRunner[
         Returns:
             A ``ToolRunnerIterator`` yielding ``ToolResult`` objects for
             each tool call in the response, with the raw response
-            available via ``.original``.
+            available via ``.original``; use it with ``async with`` to
+            cancel unfinished callbacks when leaving early.
 
         Raises:
             TypeError: Both a request and fields are given, or a tool lacks
@@ -743,10 +614,13 @@ class ToolRunner[
             ValueError: ``concurrency`` is less than ``1``, no tools were
                 provided in the request, or the response references an
                 unknown tool.
-            Exception: A callback or serialization failure, after unfinished
+            CallbackExceptionGroup: Raised while iterating: the failures
+                of callbacks or of serializing their output, after the
+                unfinished callbacks have been cancelled; a cancellation
+                inside a callback that the runner did not request is a
+                ``CallbackCancelledError`` among them.
+            CancelledError: The consumer was cancelled, after unfinished
                 callbacks have been cancelled.
-            CancelledError: The consumer or a callback was cancelled, after
-                unfinished callbacks have been cancelled.
             ValidationError: The fields do not make a valid request.
             RequestValidationError: A key of ``provider_options`` is not
                 one of the provider's options, or a value is invalid;
@@ -851,10 +725,13 @@ class ToolRunner[
             ValueError: ``concurrency`` is less than ``1``, no tools were
                 provided in the request, or a tool call references an
                 unknown tool.
-            Exception: A callback or serialization failure, after unfinished
+            CallbackExceptionGroup: Raised while iterating: the failures
+                of callbacks or of serializing their output, after the
+                unfinished callbacks have been cancelled; a cancellation
+                inside a callback that the runner did not request is a
+                ``CallbackCancelledError`` among them.
+            CancelledError: The consumer was cancelled, after unfinished
                 callbacks have been cancelled.
-            CancelledError: The consumer or a callback was cancelled, after
-                unfinished callbacks have been cancelled.
             ValidationError: The fields do not make a valid request.
             RequestValidationError: A key of ``provider_options`` is not
                 one of the provider's options, or a value is invalid;

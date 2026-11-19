@@ -8,11 +8,16 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
 
 import pytest
+from aiopulse import CallbackCancelledError, CallbackExceptionGroup
 from pydantic import MISSING, ValidationError
 
 from aiollm.enums import IncompleteReason, Provider
 from aiollm.resources.generation import GenerationResource
-from aiollm.resources.tool_runner import Callback, CallbackRunner, ToolRunner
+from aiollm.resources.tool_runner import (
+    Callback,
+    ToolRunner,
+    ToolRunnerIterator,
+)
 from aiollm.types.requests.generation import (
     GenerationRequest,
     Tool,
@@ -501,10 +506,11 @@ async def test_stream_propagates_tool_callback_errors() -> None:
 
     async with make_runner(resource).stream(request) as stream:
         assert isinstance(await anext(stream), CompletedEvent)
-        with pytest.raises(RuntimeError) as caught:
+        with pytest.raises(CallbackExceptionGroup) as caught:
             await anext(stream)
 
-    assert caught.value is error
+    assert caught.value.exceptions == (error,)
+    assert [failure.index for failure in caught.value.failures] == [0]
     assert resource.stream_exits == 1
 
 
@@ -550,10 +556,10 @@ async def test_stream_callback_failure_cancels_running_callbacks() -> None:
         assert await anext(stream) is completed
         pending = asyncio.create_task(anext(stream))
         await asyncio.wait_for(failing_started.wait(), timeout=1)
-        with pytest.raises(RuntimeError) as caught:
+        with pytest.raises(CallbackExceptionGroup) as caught:
             await pending
 
-    assert caught.value is error
+    assert caught.value.exceptions == (error,)
     assert waiting_started.is_set()
     assert waiting_cancelled.is_set()
     assert resource.stream_exits == 1
@@ -583,9 +589,14 @@ async def test_invalid_concurrency_fails_before_request() -> None:
     assert resource.stream_calls == []
 
 
-async def test_callback_runner_concurrency_sets_the_scheduling_window() -> (
-    None
-):
+def iterate(
+    calls: dict[str, Callback],
+    concurrency: int = 1,
+) -> ToolRunnerIterator[Any]:
+    return ToolRunnerIterator(calls, response_with_tools([]), concurrency)
+
+
+async def test_concurrency_sets_the_scheduling_window() -> None:
     active = 0
     peak_active = 0
     two_started = asyncio.Event()
@@ -604,7 +615,7 @@ async def test_callback_runner_concurrency_sets_the_scheduling_window() -> (
         return "done"
 
     calls = {str(index): Callback(callback, (), {}) for index in range(3)}
-    runner = CallbackRunner(calls, concurrency=2)
+    runner = iterate(calls, concurrency=2)
     first = asyncio.create_task(anext(runner))
 
     try:
@@ -618,7 +629,7 @@ async def test_callback_runner_concurrency_sets_the_scheduling_window() -> (
     assert [result.call_id for result in results] == ["0", "1", "2"]
 
 
-async def test_callback_runner_defaults_to_sequential_execution() -> None:
+async def test_callbacks_run_one_at_a_time_by_default() -> None:
     first_started = asyncio.Event()
     second_started = asyncio.Event()
     release_first = asyncio.Event()
@@ -632,7 +643,7 @@ async def test_callback_runner_defaults_to_sequential_execution() -> None:
         second_started.set()
         return "second"
 
-    runner = CallbackRunner(
+    runner = iterate(
         {
             "first": Callback(first, (), {}),
             "second": Callback(second, (), {}),
@@ -649,35 +660,134 @@ async def test_callback_runner_defaults_to_sequential_execution() -> None:
     assert second_started.is_set()
 
 
-async def test_callback_runner_supports_async_iteration_and_empty_calls() -> (
-    None
-):
-    empty_results = [result async for result in CallbackRunner({})]
+async def test_results_come_from_async_iteration_and_empty_calls() -> None:
+    empty_results = [result async for result in iterate({})]
 
     async def lookup() -> str:
         return "value"
 
     results = [
         result
-        async for result in CallbackRunner(
-            {"call-1": Callback(lookup, (), {})}
-        )
+        async for result in iterate({"call-1": Callback(lookup, (), {})})
     ]
 
     assert empty_results == []
     assert results == [ToolResult(call_id="call-1", output="value")]
 
 
-async def test_callback_runner_cannot_be_entered_after_close() -> None:
-    runner = CallbackRunner({})
+async def test_a_closed_iterator_cannot_be_entered() -> None:
+    runner = iterate({})
     await runner.aclose()
     await runner.aclose()
 
-    with pytest.raises(RuntimeError, match="CallbackRunner is closed"):
-        await runner.aenter()
+    with pytest.raises(RuntimeError, match="CallbackExecutor is closed"):
+        async with runner:
+            pytest.fail("a closed iterator was entered")
 
     with pytest.raises(StopAsyncIteration):
         await anext(runner)
+
+
+async def test_leaving_the_block_early_cancels_unfinished_callbacks() -> None:
+    cancelled: list[str] = []
+
+    async def quick() -> str:
+        return "quick"
+
+    async def slow() -> str:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append("slow")
+        return "unreachable"
+
+    calls = {
+        "call-1": Callback(quick, (), {}),
+        "call-2": Callback(slow, (), {}),
+    }
+
+    async with iterate(calls, concurrency=2) as runner:
+        async for result in runner:
+            assert result.call_id == "call-1"
+            break
+
+    assert cancelled == ["slow"]
+    with pytest.raises(StopAsyncIteration):
+        await anext(runner)
+
+
+async def test_every_failure_observed_is_in_the_group() -> None:
+    error = RuntimeError("callback failed")
+    cleanup_error = OSError("cleanup failed")
+    waiting = asyncio.Event()
+
+    async def fail() -> str:
+        await waiting.wait()
+        raise error
+
+    async def fail_on_cancel() -> str:
+        waiting.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise cleanup_error from None
+        return "unreachable"
+
+    calls = {
+        "call-1": Callback(fail, (), {}),
+        "call-2": Callback(fail_on_cancel, (), {}),
+    }
+
+    with pytest.raises(CallbackExceptionGroup) as caught:
+        async for _ in iterate(calls, concurrency=2):
+            pytest.fail("a failed callback produced a result")
+
+    assert caught.value.exceptions == (error, cleanup_error)
+    assert [failure.index for failure in caught.value.failures] == [0, 1]
+
+
+async def test_a_failure_lets_cancelled_callbacks_finish_cleanup() -> None:
+    error = RuntimeError("callback failed")
+    waiting = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup: list[str] = []
+
+    async def fail() -> str:
+        await waiting.wait()
+        raise error
+
+    async def clean_up_slowly() -> str:
+        waiting.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                cleanup.append("interrupted")
+                raise
+            cleanup.append("finished")
+        return "unreachable"
+
+    calls = {
+        "call-1": Callback(clean_up_slowly, (), {}),
+        "call-2": Callback(fail, (), {}),
+    }
+    runner = iterate(calls, concurrency=2)
+    consumer = asyncio.create_task(anext(runner))
+    await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert not consumer.done()
+    release_cleanup.set()
+    with pytest.raises(CallbackExceptionGroup) as caught:
+        await consumer
+
+    assert caught.value.exceptions == (error,)
+    assert cleanup == ["finished"]
 
 
 async def test_create_runs_callbacks_concurrently_and_keeps_call_ids() -> None:
@@ -824,17 +934,18 @@ async def test_create_callback_failure_cancels_running_callbacks() -> None:
 
     try:
         await asyncio.wait_for(failing_started.wait(), timeout=1)
-        with pytest.raises(RuntimeError) as caught:
+        with pytest.raises(CallbackExceptionGroup) as caught:
             await pending
     finally:
         await iterator.aclose()
 
-    assert caught.value is error
+    assert caught.value.exceptions == (error,)
+    assert [failure.index for failure in caught.value.failures] == [1]
     assert waiting_started.is_set()
     assert waiting_cancelled.is_set()
 
 
-async def test_callback_cancellation_cancels_running_callbacks() -> None:
+async def test_a_callback_cancelling_itself_is_a_failure() -> None:
     waiting_started = asyncio.Event()
     waiting_cancelled = asyncio.Event()
     cancellation_started = asyncio.Event()
@@ -869,11 +980,15 @@ async def test_callback_cancellation_cancels_running_callbacks() -> None:
 
     try:
         await asyncio.wait_for(cancellation_started.wait(), timeout=1)
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(CallbackExceptionGroup) as caught:
             await pending
     finally:
         await iterator.aclose()
 
+    [failure] = caught.value.exceptions
+    assert isinstance(failure, CallbackCancelledError)
+    assert isinstance(failure.__cause__, asyncio.CancelledError)
+    assert not pending.cancelled()
     assert waiting_started.is_set()
     assert waiting_cancelled.is_set()
 
@@ -918,7 +1033,7 @@ async def test_create_aclose_waits_for_callback_cancellation() -> None:
     await asyncio.wait_for(two_started.wait(), timeout=1)
 
     await iterator.aclose()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(StopAsyncIteration):
         await pending
 
     assert active == 0
@@ -998,10 +1113,35 @@ async def test_stream_context_exit_waits_for_callback_cancellation() -> None:
         pending = asyncio.create_task(anext(stream))
         await asyncio.wait_for(two_started.wait(), timeout=1)
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(StopAsyncIteration):
         await pending
 
     assert active == 0
     assert len(callback_tasks) == 2
     assert all(task is not None and task.done() for task in callback_tasks)
     assert resource.stream_exits == 1
+
+
+async def test_cancelling_the_consumer_cancels_running_callbacks() -> None:
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def wait_forever() -> str:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+        return "unreachable"
+
+    runner = iterate({"call-1": Callback(wait_forever, (), {})})
+    pending = asyncio.create_task(anext(runner))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert cancelled.is_set()
+    with pytest.raises(StopAsyncIteration):
+        await anext(runner)
