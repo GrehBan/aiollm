@@ -1580,3 +1580,17 @@ async def test_stream_passes_on_error_to_its_callbacks() -> None:
     assert results == [
         ToolResult(call_id="call-1", output="Error: no such city")
     ]
+
+
+async def test_a_late_plain_result_is_dropped_unreported() -> None:
+    returned = threading.Event()
+
+    def value() -> object:
+        returned.set()
+        return "late"
+
+    reported = await abandon(value, lambda _: returned.is_set())
+    for _ in range(5):
+        await asyncio.sleep(0.01)
+
+    assert reported == []
