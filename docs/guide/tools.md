@@ -136,7 +136,11 @@ therefore fails without running any callback. Set `concurrency` on
 `tool_runner.create()` or `tool_runner.stream()` to limit how many callbacks
 run at once; it defaults to `1`, preserving sequential execution. Results
 are yielded in tool-call order even when callbacks finish in a different
-order, and each result keeps its matching `call_id`.
+order, and each result keeps its matching `call_id`; pass `in_order=False` to
+get each result as soon as its callback finishes. A finished result that has
+not been read yet keeps its slot, so with tool-call order a slow first
+callback can hold back the next ones: `buffer_size` (default `0`) is how many
+such results may wait beyond `concurrency` while further callbacks start.
 
 The runner executes callbacks with
 [aiopulse](https://github.com/GrehBan/aiopulse)'s `CallbackExecutor`.

@@ -566,7 +566,18 @@ async def test_stream_callback_failure_cancels_running_callbacks() -> None:
     assert resource.stream_exits == 1
 
 
-async def test_invalid_concurrency_fails_before_request() -> None:
+@pytest.mark.parametrize(
+    ("concurrency", "buffer_size", "message"),
+    [
+        (0, 0, "concurrency must be greater than 0"),
+        (1, -1, "buffer_size must not be negative"),
+    ],
+)
+async def test_invalid_limits_fail_before_request(
+    concurrency: int,
+    buffer_size: int,
+    message: str,
+) -> None:
     @tool
     def lookup() -> str:
         return "value"
@@ -579,12 +590,20 @@ async def test_invalid_concurrency_fails_before_request() -> None:
     resource = FakeGenerationResource(response_with_tools([]))
     runner = make_runner(resource)
 
-    with pytest.raises(ValueError, match="concurrency must be greater than 0"):
-        await runner.create(request, concurrency=0)
+    with pytest.raises(ValueError, match=message):
+        await runner.create(
+            request,
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+        )
 
-    with pytest.raises(ValueError, match="concurrency must be greater than 0"):
-        async with runner.stream(request, concurrency=0):
-            pytest.fail("invalid concurrency opened a stream")
+    with pytest.raises(ValueError, match=message):
+        async with runner.stream(
+            request,
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+        ):
+            pytest.fail("invalid limits opened a stream")
 
     assert resource.create_calls == []
     assert resource.stream_calls == []
@@ -593,8 +612,17 @@ async def test_invalid_concurrency_fails_before_request() -> None:
 def iterate(
     calls: dict[str, Callback],
     concurrency: int = 1,
+    *,
+    buffer_size: int = 0,
+    in_order: bool = True,
 ) -> ToolRunnerIterator[Any]:
-    return ToolRunnerIterator(calls, response_with_tools([]), concurrency)
+    return ToolRunnerIterator(
+        calls,
+        response_with_tools([]),
+        concurrency,
+        buffer_size=buffer_size,
+        in_order=in_order,
+    )
 
 
 async def test_concurrency_sets_the_scheduling_window() -> None:
@@ -1250,3 +1278,100 @@ async def test_a_cancelled_sync_callback_reports_its_late_failure() -> None:
     loop.set_exception_handler(None)
 
     assert [context["exception"] for context in reported] == [late_error]
+
+
+@pytest.mark.parametrize("buffer_size", [0, 1])
+async def test_buffer_size_frees_the_slot_of_an_unread_result(
+    buffer_size: int,
+) -> None:
+    release_first = asyncio.Event()
+    third_started = asyncio.Event()
+
+    async def first() -> str:
+        await release_first.wait()
+        return "first"
+
+    async def second() -> str:
+        return "second"
+
+    async def third() -> str:
+        third_started.set()
+        return "third"
+
+    runner = iterate(
+        {
+            "call-1": Callback(first, (), {}),
+            "call-2": Callback(second, (), {}),
+            "call-3": Callback(third, (), {}),
+        },
+        concurrency=2,
+        buffer_size=buffer_size,
+    )
+    async with runner:
+        waiting = asyncio.create_task(anext(runner))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not waiting.done()
+        assert third_started.is_set() is (buffer_size > 0)
+        release_first.set()
+        results = [(await waiting).output]
+        results += [result.output async for result in runner]
+
+    assert results == ["first", "second", "third"]
+
+
+def slow_and_quick_tools() -> tuple[list[Tool], list[ToolCall]]:
+    release_slow = asyncio.Event()
+
+    @tool
+    async def slow() -> str:
+        await release_slow.wait()
+        return "slow"
+
+    @tool
+    async def quick() -> str:
+        release_slow.set()
+        return "quick"
+
+    calls = [
+        ToolCall(id="call-1", name="slow", arguments="{}"),
+        ToolCall(id="call-2", name="quick", arguments="{}"),
+    ]
+    return [slow.tool, quick.tool], calls
+
+
+async def test_create_yields_results_as_they_finish() -> None:
+    tools, calls = slow_and_quick_tools()
+    request = GenerationRequest(model="model-1", input="Hi", tools=tools)
+    runner = make_runner(FakeGenerationResource(response_with_tools(calls)))
+
+    iterator = await runner.create(request, concurrency=2, in_order=False)
+    async with iterator:
+        results = [result.call_id async for result in iterator]
+
+    assert results == ["call-2", "call-1"]
+
+
+async def test_stream_yields_results_as_they_finish() -> None:
+    tools, calls = slow_and_quick_tools()
+    completed = CompletedEvent(
+        provider=Provider.GENERIC,
+        model="model-1",
+        tool_calls=calls,
+        raw={},
+    )
+    request = GenerationRequest(model="model-1", input="Hi", tools=tools)
+    resource = FakeGenerationResource(response_with_tools(calls), [completed])
+
+    async with make_runner(resource).stream(
+        request,
+        concurrency=2,
+        in_order=False,
+    ) as events:
+        results = [
+            event.call_id
+            async for event in events
+            if isinstance(event, ToolResult)
+        ]
+
+    assert results == ["call-2", "call-1"]
