@@ -180,6 +180,7 @@ class _tool[RT, **P]:
     ) -> Tool:
         updates: dict[str, str | bool] = {}
         if strict is not MISSING:
+            _check_strict(self.callback, strict)
             updates["strict"] = strict
         if description is not MISSING:
             updates["description"] = description
@@ -299,6 +300,77 @@ def tool[RT, **P](
     return _tool(obj, strict=strict, description=description)
 
 
+def _target(obj: Callable[..., Any]) -> Callable[..., Any]:
+    """Return the callable a chain of ``functools.partial`` wraps.
+
+    Args:
+        obj: A callable, possibly a partial.
+
+    Returns:
+        The innermost callable.
+    """
+    while isinstance(obj, functools.partial):
+        obj = obj.func
+    return obj
+
+
+def _arguments_source(obj: Callable[..., Any]) -> Callable[..., Any]:
+    """Return the callable whose signature defines a tool's arguments.
+
+    Pydantic reads the signature of functions, methods, classes and
+    wrappers (``__wrapped__``), and of a partial of one of them; an
+    object with a ``__call__`` method is read through that method, so
+    ``self`` is not an argument. A partial is made anew and names the
+    wrapped callable's module, where its annotations are evaluated.
+
+    Args:
+        obj: The tool's callable.
+
+    Returns:
+        ``obj``, or the same callable with every object that has a
+        ``__call__`` method replaced by that bound method.
+    """
+    if isinstance(obj, functools.partial):
+        inner = _arguments_source(obj.func)
+        source = functools.partial(inner, *obj.args, **obj.keywords)
+        # Pydantic evaluates the annotations in the module the callable
+        # names, which is functools for a partial; the wrapped
+        # function's module resolves them (postponed annotations).
+        source.__module__ = _target(inner).__module__
+        return source
+    if (
+        inspect.isroutine(obj)
+        or inspect.isclass(obj)
+        or hasattr(obj, "__wrapped__")
+    ):
+        return obj
+    call: Callable[..., Any] = obj.__call__  # type: ignore[operator]
+    return call
+
+
+def _check_strict(obj: Callable[..., Any], strict: bool | MISSING) -> None:
+    """Refuse a strict tool whose callable takes ``**kwargs``.
+
+    The arguments of ``**kwargs`` are an object of any keys, which a
+    strict schema cannot describe: both providers need
+    ``additionalProperties: false`` on every object of it.
+
+    Args:
+        obj: The tool's callable.
+        strict: The tool's ``strict``.
+
+    Raises:
+        TypeError: ``strict`` is ``True`` and the callable takes
+            ``**kwargs``.
+    """
+    if strict is not True:
+        return
+    parameters = inspect.signature(_arguments_source(obj)).parameters
+    if any(p.kind is p.VAR_KEYWORD for p in parameters.values()):
+        message = "A strict tool cannot take **kwargs"
+        raise TypeError(message)
+
+
 def _set_tool_internals(
     obj: Tool,
     *,
@@ -358,12 +430,19 @@ class Tool(BaseAPIType):
     ) -> Self:
         """Create a tool from a callable's signature and annotations.
 
-        The callable's ``__name__`` is used as the tool name.
+        The callable's ``__name__`` is used as the tool name; a
+        ``functools.partial`` takes the name of the function it wraps,
+        and an object with a ``__call__`` method the name of its class.
         Its parameters and annotations are converted to JSON Schema
-        using Pydantic's arguments schema generation.
+        using Pydantic's arguments schema generation: a partial's bound
+        arguments are left out, an object's ``__call__`` is read without
+        ``self``, ``*args`` is an array property named after it and
+        ``**kwargs`` an object property named after it. Any other key is
+        refused, so the schema has ``additionalProperties: false``.
 
         If ``description`` is not provided, the callable's docstring
-        is used. If it has no docstring, the description is omitted.
+        is used (a partial's function's, an object's class's or else
+        its ``__call__``'s). If it has none, the description is omitted.
 
         The callable is retained as the tool callback. Defining the
         tool does not invoke it; ``generation.tool_runner`` invokes it
@@ -381,7 +460,8 @@ class Tool(BaseAPIType):
             The tool.
 
         Raises:
-            TypeError: The callable does not have a ``__name__``.
+            TypeError: ``strict`` is ``True`` and the callable takes
+                ``**kwargs``, which a strict schema cannot describe.
 
         Example:
             >>> def get_weather(city: str, units: str = "celsius"):
@@ -405,15 +485,22 @@ class Tool(BaseAPIType):
         description: str | MISSING = MISSING,
         strict: bool | MISSING = MISSING,
     ) -> Self:
-        name = getattr(obj, "__name__", None)
+        target = _target(obj)
+        name = getattr(target, "__name__", None)
         if name is None:
-            raise TypeError("Callable requires an explicit name")
+            name = type(target).__name__
 
         if description is MISSING:
-            description = inspect.getdoc(obj) or MISSING
+            description = (
+                inspect.getdoc(target)
+                or inspect.getdoc(_arguments_source(target))
+                or MISSING
+            )
 
-        core = generate_arguments_schema(obj)
+        _check_strict(obj, strict)
+        core = generate_arguments_schema(_arguments_source(obj))
         schema = GenerateJsonSchema().generate(core)
+        schema.setdefault("additionalProperties", False)
         result = cls(
             name=name,
             description=description,
@@ -557,7 +644,7 @@ def parse_model_arguments(
         return model.model_validate_json(arguments)
 
     if callable(model):
-        core = generate_arguments_schema(model)
+        core = generate_arguments_schema(_arguments_source(model))
         validator = SchemaValidator(core)
         return validator.validate_json(arguments)
 

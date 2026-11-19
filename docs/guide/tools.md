@@ -79,6 +79,15 @@ overrides the docstring. `@tool(description=..., strict=...)` provides the
 same options and exposes the cached definition as `.tool`. Neither executes
 the function while defining it.
 
+Any callable works. A `functools.partial` takes the name and docstring of the
+function it wraps, and its bound arguments are left out of the schema, so
+`functools.partial(get_weather, api_key)` keeps the key away from the model.
+An object with a `__call__` method takes the name of its class, the class
+docstring (or else the method's), and the method's parameters without `self`.
+`*args` becomes an array property and `**kwargs` an object property, each named
+after its parameter; `parse_arguments()` puts them back in their places. The
+schema has `additionalProperties: false`, since any other key is refused.
+
 ## Manual buffered workflow
 
 The first example sends a request with a callable tool. When the model returns
@@ -116,8 +125,11 @@ before sending.
 
 With `strict=True`, the generated schema must have
 `additionalProperties: false` and list every property in `required`;
-otherwise the providers return 400. Without `strict=True`, neither provider
-requests strict schema adherence.
+otherwise the providers return 400. A parameter with a default, or `*args`,
+is not required, so a strict callable has neither. A callable with
+`**kwargs` cannot be strict at all, since its arguments are an object of any
+keys: `Tool.from_callable()` and `@tool` raise `TypeError`. Without
+`strict=True`, neither provider requests strict schema adherence.
 
 ## Automatic callback runner
 

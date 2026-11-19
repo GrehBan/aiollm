@@ -1088,6 +1088,7 @@ def test_a_tool_from_a_callable_sends_its_schema() -> None:
         },
         "required": ["city"],
         "type": "object",
+        "additionalProperties": False,
     }
     assert called == []
 
@@ -1174,13 +1175,15 @@ def test_tool_call_arguments_can_be_validated_by_a_callable() -> None:
     assert call.parse_arguments(add) == ((2, 3), {})
 
 
-def test_a_callable_without_a_name_cannot_define_a_tool() -> None:
-    class CallableWithoutName:
+def test_a_callable_object_is_named_after_its_class() -> None:
+    class Echo:
         def __call__(self, text: str) -> str:
             return text
 
-    with pytest.raises(TypeError, match="Callable requires an explicit name"):
-        Tool.from_callable(CallableWithoutName())
+    definition = Tool.from_callable(Echo())
+
+    assert definition.name == "Echo"
+    assert definition.parameters["required"] == ["text"]
 
 
 def test_tool_call_arguments_are_validated_by_a_model() -> None:

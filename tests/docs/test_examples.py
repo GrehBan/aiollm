@@ -986,6 +986,7 @@ async def test_tools(
                 },
                 "required": ["city"],
                 "type": "object",
+                "additionalProperties": False,
             },
             "strict": None,
         }
