@@ -199,7 +199,8 @@ an object bound to the thread that made it (an `sqlite3` connection, for
 example) must be used from an `async def` callback instead. A thread cannot be
 stopped: a cancelled synchronous callback runs to its end after the runner has
 closed, and a failure it then ends with is reported through the event loop's
-exception handler.
+exception handler, even after the coroutine given to `asyncio.run` has
+returned, since the loop waits for its worker threads before it closes.
 
 The response is available as `.original`. An incomplete response has no
 results and does not invoke callbacks; inspect `incomplete_reason` before
