@@ -51,7 +51,7 @@ classifiers = [
 dependencies = [
     "aiodns>=4.0.4",
     "aiohttp>=3.14.5",
-    "aiopulse @ git+https://github.com/GrehBan/aiopulse@3cdba8849744a81d39bcbd4c4b45419d7383e68e",
+    "aiopulse-py>=0.0.5",
     "brotli>=1.2.1",
     "certifi>=2026.10.23",
     "multidict>=7.2.1",
@@ -75,11 +75,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 path = "src/aiollm/__meta__.py"
-
-# aiopulse is not on PyPI yet, so the wheel names its commit; PyPI refuses
-# such a dependency, so it becomes a version range before the first upload.
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aiollm"]

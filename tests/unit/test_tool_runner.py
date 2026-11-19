@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+import concurrent.futures
+import inspect
+import threading
+from collections.abc import AsyncGenerator, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
 
@@ -565,7 +568,18 @@ async def test_stream_callback_failure_cancels_running_callbacks() -> None:
     assert resource.stream_exits == 1
 
 
-async def test_invalid_concurrency_fails_before_request() -> None:
+@pytest.mark.parametrize(
+    ("concurrency", "buffer_size", "message"),
+    [
+        (0, 0, "concurrency must be greater than 0"),
+        (1, -1, "buffer_size must not be negative"),
+    ],
+)
+async def test_invalid_limits_fail_before_request(
+    concurrency: int,
+    buffer_size: int,
+    message: str,
+) -> None:
     @tool
     def lookup() -> str:
         return "value"
@@ -578,12 +592,20 @@ async def test_invalid_concurrency_fails_before_request() -> None:
     resource = FakeGenerationResource(response_with_tools([]))
     runner = make_runner(resource)
 
-    with pytest.raises(ValueError, match="concurrency must be greater than 0"):
-        await runner.create(request, concurrency=0)
+    with pytest.raises(ValueError, match=message):
+        await runner.create(
+            request,
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+        )
 
-    with pytest.raises(ValueError, match="concurrency must be greater than 0"):
-        async with runner.stream(request, concurrency=0):
-            pytest.fail("invalid concurrency opened a stream")
+    with pytest.raises(ValueError, match=message):
+        async with runner.stream(
+            request,
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+        ):
+            pytest.fail("invalid limits opened a stream")
 
     assert resource.create_calls == []
     assert resource.stream_calls == []
@@ -592,8 +614,17 @@ async def test_invalid_concurrency_fails_before_request() -> None:
 def iterate(
     calls: dict[str, Callback],
     concurrency: int = 1,
+    *,
+    buffer_size: int = 0,
+    in_order: bool = True,
 ) -> ToolRunnerIterator[Any]:
-    return ToolRunnerIterator(calls, response_with_tools([]), concurrency)
+    return ToolRunnerIterator(
+        calls,
+        response_with_tools([]),
+        concurrency,
+        buffer_size=buffer_size,
+        in_order=in_order,
+    )
 
 
 async def test_concurrency_sets_the_scheduling_window() -> None:
@@ -1145,3 +1176,421 @@ async def test_cancelling_the_consumer_cancels_running_callbacks() -> None:
     assert cancelled.is_set()
     with pytest.raises(StopAsyncIteration):
         await anext(runner)
+
+
+async def test_sync_callbacks_run_in_worker_threads() -> None:
+    loop_thread = threading.get_ident()
+    release = threading.Event()
+    threads: list[int] = []
+
+    def wait_for_release() -> str:
+        threads.append(threading.get_ident())
+        assert release.wait(timeout=1)
+        return "released"
+
+    async def set_release() -> str:
+        await asyncio.sleep(0)
+        release.set()
+        return "set"
+
+    calls = {
+        "call-1": Callback(wait_for_release, (), {}),
+        "call-2": Callback(set_release, (), {}),
+    }
+    results = [result async for result in iterate(calls, concurrency=2)]
+
+    assert [result.output for result in results] == ["released", "set"]
+    assert threads and threads[0] != loop_thread
+
+
+async def test_sync_callbacks_overlap_up_to_the_concurrency() -> None:
+    barrier = threading.Barrier(2, timeout=1)
+
+    def meet(name: str) -> str:
+        barrier.wait()
+        return name
+
+    calls = {
+        name: Callback(meet, (name,), {}) for name in ("call-1", "call-2")
+    }
+    results = [result async for result in iterate(calls, concurrency=2)]
+
+    assert [result.output for result in results] == ["call-1", "call-2"]
+
+
+class AsyncCallable:
+    """An object whose ``__call__`` is a coroutine function."""
+
+    def __init__(self) -> None:
+        self.thread: int | None = None
+
+    async def __call__(self) -> str:
+        self.thread = threading.get_ident()
+        return "called"
+
+
+async def test_async_callables_run_in_the_event_loop() -> None:
+    callable_object = AsyncCallable()
+
+    async def coroutine() -> str:
+        return "awaited"
+
+    def returns_coroutine() -> Coroutine[Any, Any, str]:
+        return coroutine()
+
+    calls = {
+        "call-1": Callback(callable_object, (), {}),
+        "call-2": Callback(returns_coroutine, (), {}),
+    }
+    results = [result async for result in iterate(calls)]
+
+    assert callable_object.thread == threading.get_ident()
+    assert [result.output for result in results] == ["called", "awaited"]
+
+
+async def abandon(
+    late: Callable[[], object],
+    settled: Callable[[list[dict[str, Any]]], bool] = bool,
+) -> list[dict[str, Any]]:
+    """Cancel the consumer of a sync callback, then let it end with ``late``.
+
+    Waits until ``settled`` holds for what the loop's exception handler
+    received, and returns that.
+    """
+    loop = asyncio.get_running_loop()
+    reported: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _, context: reported.append(context))
+    started = asyncio.Event()
+    release = threading.Event()
+
+    def end_late() -> object:
+        loop.call_soon_threadsafe(started.set)
+        release.wait()
+        return late()
+
+    runner = iterate({"call-1": Callback(end_late, (), {})})
+    consumer = asyncio.create_task(anext(runner))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        assert reported == []
+    finally:
+        release.set()
+        await runner.aclose()
+
+    try:
+        for _ in range(500):
+            if settled(reported):
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        loop.set_exception_handler(None)
+    return reported
+
+
+async def test_a_cancelled_sync_callback_reports_its_late_failure() -> None:
+    late_error = OSError("late failure")
+
+    def fail() -> object:
+        raise late_error
+
+    reported = await abandon(fail)
+
+    assert [context["exception"] for context in reported] == [late_error]
+
+
+async def test_a_late_future_cancellation_is_reported_as_it_was() -> None:
+    late_error = concurrent.futures.CancelledError()
+
+    def fail() -> object:
+        raise late_error
+
+    reported = await abandon(fail)
+
+    assert [context["exception"] for context in reported] == [late_error]
+
+
+async def test_a_late_coroutine_result_is_closed_unawaited() -> None:
+    async def never_awaited() -> str:
+        return "unreachable"
+
+    coroutines: list[Coroutine[Any, Any, str]] = []
+
+    def make() -> object:
+        coroutine = never_awaited()
+        coroutines.append(coroutine)
+        return coroutine
+
+    def closed(_: list[dict[str, Any]]) -> bool:
+        return bool(coroutines) and (
+            inspect.getcoroutinestate(coroutines[0]) == inspect.CORO_CLOSED
+        )
+
+    reported = await abandon(make, closed)
+
+    assert reported == []
+    assert inspect.getcoroutinestate(coroutines[0]) == inspect.CORO_CLOSED
+
+
+async def test_a_cancelled_future_read_by_a_callback_is_its_failure() -> None:
+    def read_cancelled() -> str:
+        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future.cancel()
+        return future.result()
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(read_cancelled, (), {})},
+        response_with_tools([]),
+        on_error=lambda error: type(error).__module__,
+    )
+    results = [result.output async for result in runner]
+
+    assert results == ["concurrent.futures._base"]
+
+
+@pytest.mark.parametrize("buffer_size", [0, 1])
+async def test_buffer_size_frees_the_slot_of_an_unread_result(
+    buffer_size: int,
+) -> None:
+    release_first = asyncio.Event()
+    third_started = asyncio.Event()
+
+    async def first() -> str:
+        await release_first.wait()
+        return "first"
+
+    async def second() -> str:
+        return "second"
+
+    async def third() -> str:
+        third_started.set()
+        return "third"
+
+    runner = iterate(
+        {
+            "call-1": Callback(first, (), {}),
+            "call-2": Callback(second, (), {}),
+            "call-3": Callback(third, (), {}),
+        },
+        concurrency=2,
+        buffer_size=buffer_size,
+    )
+    async with runner:
+        waiting = asyncio.create_task(anext(runner))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not waiting.done()
+        assert third_started.is_set() is (buffer_size > 0)
+        release_first.set()
+        results = [(await waiting).output]
+        results += [result.output async for result in runner]
+
+    assert results == ["first", "second", "third"]
+
+
+def slow_and_quick_tools() -> tuple[list[Tool], list[ToolCall]]:
+    release_slow = asyncio.Event()
+
+    @tool
+    async def slow() -> str:
+        await release_slow.wait()
+        return "slow"
+
+    @tool
+    async def quick() -> str:
+        release_slow.set()
+        return "quick"
+
+    calls = [
+        ToolCall(id="call-1", name="slow", arguments="{}"),
+        ToolCall(id="call-2", name="quick", arguments="{}"),
+    ]
+    return [slow.tool, quick.tool], calls
+
+
+async def test_create_yields_results_as_they_finish() -> None:
+    tools, calls = slow_and_quick_tools()
+    request = GenerationRequest(model="model-1", input="Hi", tools=tools)
+    runner = make_runner(FakeGenerationResource(response_with_tools(calls)))
+
+    iterator = await runner.create(request, concurrency=2, in_order=False)
+    async with iterator:
+        results = [result.call_id async for result in iterator]
+
+    assert results == ["call-2", "call-1"]
+
+
+async def test_stream_yields_results_as_they_finish() -> None:
+    tools, calls = slow_and_quick_tools()
+    completed = CompletedEvent(
+        provider=Provider.GENERIC,
+        model="model-1",
+        tool_calls=calls,
+        raw={},
+    )
+    request = GenerationRequest(model="model-1", input="Hi", tools=tools)
+    resource = FakeGenerationResource(response_with_tools(calls), [completed])
+
+    async with make_runner(resource).stream(
+        request,
+        concurrency=2,
+        in_order=False,
+    ) as events:
+        results = [
+            event.call_id
+            async for event in events
+            if isinstance(event, ToolResult)
+        ]
+
+    assert results == ["call-2", "call-1"]
+
+
+def describe(error: Exception) -> str:
+    return f"Error: {error}"
+
+
+async def test_on_error_turns_a_failure_into_the_output() -> None:
+    @tool
+    def fail() -> str:
+        raise ValueError("no such city")
+
+    @tool
+    async def lookup() -> dict[str, int]:
+        return {"celsius": 15}
+
+    calls = [
+        ToolCall(id="call-1", name="fail", arguments="{}"),
+        ToolCall(id="call-2", name="lookup", arguments="{}"),
+    ]
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[fail.tool, lookup.tool],
+    )
+    runner = make_runner(FakeGenerationResource(response_with_tools(calls)))
+
+    iterator = await runner.create(request, on_error=describe)
+    results = [result async for result in iterator]
+
+    assert results == [
+        ToolResult(call_id="call-1", output="Error: no such city"),
+        ToolResult(call_id="call-2", output='{"celsius": 15}'),
+    ]
+
+
+async def test_on_error_gets_serialization_failures_and_may_return_json() -> (
+    None
+):
+    seen: list[Exception] = []
+
+    def record(error: Exception) -> dict[str, str]:
+        seen.append(error)
+        return {"error": type(error).__name__}
+
+    async def unserializable() -> object:
+        return object()
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(unserializable, (), {})},
+        response_with_tools([]),
+        on_error=record,
+    )
+    results = [result.output async for result in runner]
+
+    assert results == ['{"error": "TypeError"}']
+    assert [type(error) for error in seen] == [TypeError]
+
+
+async def test_a_failing_on_error_is_the_failure() -> None:
+    original = RuntimeError("callback failed")
+    handler_error = LookupError("handler failed")
+
+    async def fail() -> str:
+        raise original
+
+    def broken_handler(error: Exception) -> str:
+        raise handler_error
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(fail, (), {})},
+        response_with_tools([]),
+        on_error=broken_handler,
+    )
+
+    with pytest.raises(CallbackExceptionGroup) as caught:
+        async for _ in runner:
+            pytest.fail("a failed handler produced a result")
+
+    assert caught.value.exceptions == (handler_error,)
+    assert handler_error.__context__ is original
+
+
+async def test_on_error_does_not_receive_an_unrequested_cancellation() -> None:
+    seen: list[Exception] = []
+
+    def record(error: Exception) -> str:
+        seen.append(error)
+        return "recorded"
+
+    async def cancel_itself() -> str:
+        task = asyncio.current_task()
+        assert task is not None
+        task.cancel()
+        await asyncio.sleep(0)
+        return "unreachable"
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(cancel_itself, (), {})},
+        response_with_tools([]),
+        on_error=record,
+    )
+
+    with pytest.raises(CallbackExceptionGroup) as caught:
+        async for _ in runner:
+            pytest.fail("a cancelled callback produced a result")
+
+    assert isinstance(caught.value.exceptions[0], CallbackCancelledError)
+    assert seen == []
+
+
+async def test_stream_passes_on_error_to_its_callbacks() -> None:
+    @tool
+    def fail() -> str:
+        raise ValueError("no such city")
+
+    calls = [ToolCall(id="call-1", name="fail", arguments="{}")]
+    completed = CompletedEvent(
+        provider=Provider.GENERIC,
+        model="model-1",
+        tool_calls=calls,
+        raw={},
+    )
+    request = GenerationRequest(model="model-1", input="Hi", tools=[fail.tool])
+    resource = FakeGenerationResource(response_with_tools(calls), [completed])
+
+    async with make_runner(resource).stream(
+        request, on_error=describe
+    ) as events:
+        results = [
+            event async for event in events if isinstance(event, ToolResult)
+        ]
+
+    assert results == [
+        ToolResult(call_id="call-1", output="Error: no such city")
+    ]
+
+
+async def test_a_late_plain_result_is_dropped_unreported() -> None:
+    returned = threading.Event()
+
+    def value() -> object:
+        returned.set()
+        return "late"
+
+    reported = await abandon(value, lambda _: returned.is_set())
+    for _ in range(5):
+        await asyncio.sleep(0.01)
+
+    assert reported == []

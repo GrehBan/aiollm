@@ -136,7 +136,13 @@ therefore fails without running any callback. Set `concurrency` on
 `tool_runner.create()` or `tool_runner.stream()` to limit how many callbacks
 run at once; it defaults to `1`, preserving sequential execution. Results
 are yielded in tool-call order even when callbacks finish in a different
-order, and each result keeps its matching `call_id`.
+order, and each result keeps its matching `call_id`; pass `in_order=False` to
+get each result as soon as its callback finishes. A finished result that has
+not been read yet keeps its slot, so with tool-call order a slow first
+callback can hold back the next ones: `buffer_size` (default `0`) is how many
+such results may wait beyond `concurrency` while further callbacks start; once
+they are all taken, the next callback waits again. Callbacks are started only
+while the consumer waits for a result, not between its reads.
 
 The runner executes callbacks with
 [aiopulse](https://github.com/GrehBan/aiopulse)'s `CallbackExecutor`.
@@ -153,14 +159,30 @@ only a cancellation of the consumer itself propagates as `CancelledError`,
 after unfinished callbacks have been cancelled and awaited. Callbacks already
 started may have performed side effects before cancellation.
 
+To let the model read a failure instead, pass `on_error`: it is called with
+the `Exception` of a callback, or of serializing its output, and what it
+returns becomes that call's `ToolResult.output` (a string as is, anything else
+as JSON), while the other callbacks go on. For example,
+`on_error=lambda error: f"Error: {error}"` sends the exception's message; keep
+in mind that the message goes to the provider. An exception raised by
+`on_error` itself is the call's failure, and a cancellation is never passed to
+it.
+
 If buffered results are only partially consumed, use the iterator as an async
 context manager (`async with calls:`) or call `await calls.aclose()` to cancel
 and wait for unfinished callbacks; closing raises the failures recorded so far,
 unless the block is already raising an exception, which then takes precedence.
 An iteration still waiting in another task ends with `StopAsyncIteration`. The
 streaming context closes its callbacks the same way when it exits.
-Synchronous callbacks run inline and do not overlap; use async callbacks or
-explicitly offload blocking work to benefit from concurrency.
+Async callbacks (`async def`, or an object whose `__call__` is one) run in the
+event loop. Any other callback runs in a worker thread (`asyncio.to_thread`),
+so a blocking one does not stop the loop, and with `concurrency` above `1`
+synchronous callbacks run at the same time: they must then be thread-safe, and
+an object bound to the thread that made it (an `sqlite3` connection, for
+example) must be used from an `async def` callback instead. A thread cannot be
+stopped: a cancelled synchronous callback runs to its end after the runner has
+closed, and a failure it then ends with is reported through the event loop's
+exception handler.
 
 The response is available as `.original`. An incomplete response has no
 results and does not invoke callbacks; inspect `incomplete_reason` before

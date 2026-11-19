@@ -108,10 +108,21 @@ class ThreadWork:
     later, unrelated caller.
     """
 
-    def __init__(self) -> None:
-        """Create the helper with no call running."""
+    def __init__(
+        self,
+        *,
+        dispose: Callable[[Any], object] | None = None,
+    ) -> None:
+        """Create the helper with no call running.
+
+        Args:
+            dispose: Releases what a call returned after its caller was
+                cancelled, since nobody receives it any more; what it
+                raises is reported like a failed call.
+        """
         self._running: asyncio.Task[Any] | None = None
         self._finishing: asyncio.Task[None] | None = None
+        self._dispose = dispose
 
     @property
     def busy(self) -> bool:
@@ -243,6 +254,8 @@ class ThreadWork:
     def _abandoned(self, task: asyncio.Task[Any]) -> None:
         """Report how a call whose caller was cancelled ended, if it failed.
 
+        A result it returned goes to ``dispose``, if given.
+
         Args:
             task: The call.
         """
@@ -250,6 +263,12 @@ class ThreadWork:
             return
 
         exc = task.exception()
+
+        if exc is None and self._dispose is not None:
+            try:
+                self._dispose(task.result())
+            except Exception as error:  # noqa: BLE001
+                exc = error
 
         if exc is not None:
             _report("A call whose caller was cancelled failed", exc)

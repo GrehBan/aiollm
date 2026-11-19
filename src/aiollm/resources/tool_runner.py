@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import inspect
 import json
 from collections.abc import (
@@ -17,11 +18,12 @@ from contextlib import (
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self, Unpack, overload
 
-from aiopulse import CallbackExecutor, invoke
+from aiopulse import CallbackExecutor, ExecutionPolicy, invoke
 from pydantic import MISSING
 
 from aiollm.resources.protocols import make_request
 from aiollm.session.protocols import CallOptions, ISession, Timeout
+from aiollm.types.files import ThreadWork
 from aiollm.types.requests.generation import (
     GenerationRequest,
     NoProviderOptions,
@@ -114,11 +116,95 @@ class Callback:
         return cls(callback=callback, args=args, kwargs=kwargs)
 
     async def __call__(self) -> Any:
-        """Invoke the bound callback, awaiting it if awaitable."""
-        result = self.callback(*self.args, **self.kwargs)
+        """Invoke the bound callback and return what it produced.
+
+        An async callback runs in the event loop. Any other runs in a
+        worker thread, so a blocking callback does not stop the loop; a
+        thread cannot be stopped, so a cancelled one runs to its end and
+        a failure it then ends with goes to the loop's exception handler
+        (``ThreadWork``). An awaitable it returns is awaited in the loop.
+
+        Returns:
+            The callback's result.
+        """
+        if _is_async(self.callback):
+            result = self.callback(*self.args, **self.kwargs)
+        else:
+            result = await ThreadWork(dispose=_dispose).run(
+                _call_in_thread, self.callback, self.args, self.kwargs
+            )
+            if isinstance(result, _Raised):
+                raise result.error
         if inspect.isawaitable(result):
             return await result
         return result
+
+
+@dataclass(slots=True, frozen=True)
+class _Raised:
+    """An exception a callback raised that must cross the thread as is.
+
+    Attributes:
+        error: The exception.
+    """
+
+    error: Exception
+
+
+def _call_in_thread(
+    callback: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    """Call a synchronous callback in its worker thread.
+
+    A ``concurrent.futures.CancelledError`` (a callback that read a
+    cancelled future) is returned in a ``_Raised``: asyncio would turn it
+    into ``asyncio.CancelledError`` on its way out of the thread, and the
+    callback's failure would then look like a cancellation.
+
+    Args:
+        callback: The callback.
+        args: Its positional arguments.
+        kwargs: Its keyword arguments.
+
+    Returns:
+        What the callback returned, or the ``_Raised`` error.
+    """
+    try:
+        return callback(*args, **kwargs)
+    except concurrent.futures.CancelledError as error:
+        return _Raised(error)
+
+
+def _dispose(result: object) -> None:
+    """Release what a synchronous callback returned after a cancel.
+
+    Args:
+        result: What the callback returned.
+
+    Raises:
+        Exception: The error a ``_Raised`` holds, to be reported.
+    """
+    if isinstance(result, _Raised):
+        raise result.error
+    if inspect.iscoroutine(result):
+        result.close()
+
+
+def _is_async(callback: Callable[..., Any]) -> bool:
+    """Tell whether a callback is an async function or async callable.
+
+    Args:
+        callback: A tool's callback.
+
+    Returns:
+        ``True`` for an ``async def`` function, a partial of one, or an
+        object whose ``__call__`` is one.
+    """
+    return inspect.iscoroutinefunction(
+        callback
+    ) or inspect.iscoroutinefunction(type(callback).__call__)
 
 
 def bind_callbacks(
@@ -146,78 +232,121 @@ def bind_callbacks(
     return callbacks
 
 
+type ToolErrorHandler = Callable[[Exception], object]
+"""Turns a failed callback's exception into the output the model reads."""
+
+
 @invoke
-async def _run_tool(call_id: str, callback: Callback) -> ToolResult:
+async def _run_tool(
+    call_id: str,
+    callback: Callback,
+    on_error: ToolErrorHandler | None,
+) -> ToolResult:
     """Run one bound callback and wrap its output as the call's result.
 
     Args:
         call_id: The tool call the result answers.
         callback: The bound callback.
+        on_error: Makes the output of a callback, or of serializing its
+            output, that failed with an ``Exception``; ``None`` lets the
+            failure through.
 
     Returns:
         The callback's output, serialized, under ``call_id``.
     """
-    return ToolResult(
-        call_id=call_id,
-        output=_serialize_tool_output(await callback()),
-    )
+    try:
+        output = _serialize_tool_output(await callback())
+    except Exception as exc:
+        if on_error is None:
+            raise
+        output = _serialize_tool_output(on_error(exc))
+    return ToolResult(call_id=call_id, output=output)
 
 
 def _invocations(
     calls: Mapping[str, Callback],
+    on_error: ToolErrorHandler | None,
 ) -> Iterator[CallbackInvocation[..., ToolResult]]:
     """Turn bound callbacks into invocations for the executor, in order.
 
     Args:
         calls: Bound callbacks keyed by tool call ID.
+        on_error: Makes the output of a failed callback, if given.
 
     Yields:
         One invocation per call, producing that call's ``ToolResult``.
     """
     for call_id, callback in calls.items():
-        yield _run_tool(call_id, callback)
+        yield _run_tool(call_id, callback, on_error)
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class _RunOptions:
+    """How the callbacks of one response are run.
+
+    Attributes:
+        concurrency: Maximum number of callbacks executing at once.
+        buffer_size: Finished results kept beyond ``concurrency`` before
+            the next callback waits for the consumer.
+        in_order: Yield results in tool-call order; ``False`` yields
+            each as soon as its callback finishes.
+        on_error: Makes the output of a failed callback, so the model
+            reads the failure; ``None`` raises it.
+    """
+
+    concurrency: int = 1
+    buffer_size: int = 0
+    in_order: bool = True
+    on_error: ToolErrorHandler | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse limits the executor would refuse, before any request.
+
+        Raises:
+            ValueError: ``concurrency`` is less than ``1`` or
+                ``buffer_size`` is negative.
+        """
+        if self.concurrency < 1:
+            raise ValueError("concurrency must be greater than 0")
+        if self.buffer_size < 0:
+            raise ValueError("buffer_size must not be negative")
 
 
 def _executor(
     calls: Mapping[str, Callback],
-    concurrency: int,
+    run_options: _RunOptions,
 ) -> CallbackExecutor[ToolResult]:
     """Make the executor that runs the callbacks of one response.
 
-    Results come in tool-call order, and the first failure cancels the
-    callbacks still running.
+    The first failure cancels the callbacks still running.
 
     Args:
         calls: Bound callbacks keyed by tool call ID.
-        concurrency: Maximum number of callbacks executing at once.
+        run_options: How the callbacks are run.
 
     Returns:
         The executor, not entered yet.
     """
-    return CallbackExecutor(_invocations(calls), concurrency=concurrency)
-
-
-def _check_concurrency(concurrency: int) -> None:
-    """Refuse a concurrency limit below one, before anything is sent.
-
-    Args:
-        concurrency: The requested limit.
-
-    Raises:
-        ValueError: ``concurrency`` is less than ``1``.
-    """
-    if concurrency < 1:
-        raise ValueError("concurrency must be greater than 0")
+    return CallbackExecutor(
+        _invocations(calls, run_options.on_error),
+        concurrency=run_options.concurrency,
+        buffer_size=run_options.buffer_size,
+        execution_policy=(
+            ExecutionPolicy.SEQUENTIAL
+            if run_options.in_order
+            else ExecutionPolicy.FIRST_COMPLETED
+        ),
+    )
 
 
 class ToolRunnerIterator[RawT]:
     """Single-use async iterator executing tool callbacks for response.
 
     Runs the callbacks through an ``aiopulse.CallbackExecutor`` and yields
-    their results in tool-call order, regardless of completion order. The
-    generation response is available through ``original``. Use it with
-    ``async with`` to cancel and await unfinished callbacks when leaving
-    early.
+    their results in tool-call order, regardless of completion order,
+    unless ``in_order`` is ``False``. The generation response is
+    available through ``original``. Use it with ``async with`` to cancel
+    and await unfinished callbacks when leaving early.
 
     Callback failures are raised together in one
     ``CallbackExceptionGroup``; a cancellation the runner did not request
@@ -228,7 +357,11 @@ class ToolRunnerIterator[RawT]:
         self,
         calls: Mapping[str, Callback],
         original: GenerationResponse[RawT],
-        concurrency: int,
+        concurrency: int = 1,
+        *,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
     ) -> None:
         """Initialize the iterator.
 
@@ -238,13 +371,26 @@ class ToolRunnerIterator[RawT]:
             original: The generation response containing the tool calls.
                 Preserved and exposed through the ``original`` attribute.
             concurrency: Maximum number of callbacks executing concurrently.
+            buffer_size: Finished results kept beyond ``concurrency``
+                before the next callback waits for the consumer.
+            in_order: Yield results in tool-call order; ``False`` yields
+                each as soon as its callback finishes.
+            on_error: Makes the output of a callback that failed with an
+                ``Exception``, so the model reads the failure; ``None``
+                raises it.
 
         Raises:
-            ValueError: If ``concurrency`` is less than ``1``.
+            ValueError: If ``concurrency`` is less than ``1`` or
+                ``buffer_size`` is negative.
         """
-        _check_concurrency(concurrency)
+        run_options = _RunOptions(
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+            in_order=in_order,
+            on_error=on_error,
+        )
         self.original = original
-        self._executor = _executor(calls, concurrency)
+        self._executor = _executor(calls, run_options)
 
     def __aiter__(self) -> Self:
         """Return this iterator.
@@ -323,7 +469,7 @@ class ToolStreamRunnerIterator[RawItemT]:
     Wraps a generation stream and forwards its events to the consumer.
     After the stream completes successfully, tool callbacks are executed
     through an ``aiopulse.CallbackExecutor``, and their results are yielded
-    in the original tool call order.
+    in the original tool call order, unless ``in_order`` is ``False``.
 
     The underlying generation stream is opened lazily during iteration.
     """
@@ -332,7 +478,11 @@ class ToolStreamRunnerIterator[RawItemT]:
         self,
         original: AbstractAsyncContextManager[GenerationStream[RawItemT]],
         tools: Mapping[str, Tool],
-        concurrency: int,
+        concurrency: int = 1,
+        *,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
     ) -> None:
         """Initialize the stream iterator.
 
@@ -343,14 +493,26 @@ class ToolStreamRunnerIterator[RawItemT]:
                 Used to resolve and bind tool calls from the completed
                 generation response.
             concurrency: Maximum number of callbacks executing concurrently.
+            buffer_size: Finished results kept beyond ``concurrency``
+                before the next callback waits for the consumer.
+            in_order: Yield results in tool-call order; ``False`` yields
+                each as soon as its callback finishes.
+            on_error: Makes the output of a callback that failed with an
+                ``Exception``, so the model reads the failure; ``None``
+                raises it.
 
         Raises:
-            ValueError: If ``concurrency`` is less than ``1``.
+            ValueError: If ``concurrency`` is less than ``1`` or
+                ``buffer_size`` is negative.
         """
-        _check_concurrency(concurrency)
+        self._run_options = _RunOptions(
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+            in_order=in_order,
+            on_error=on_error,
+        )
         self.original = original
         self.tools = tools
-        self._concurrency = concurrency
         self._runner: CallbackExecutor[ToolResult] | None = None
 
         self._stream: GenerationStream[RawItemT] | None = None
@@ -440,7 +602,7 @@ class ToolStreamRunnerIterator[RawItemT]:
                 raise
 
             callbacks = bind_callbacks(completed.tool_calls, self.tools)
-            self._runner = _executor(callbacks, self._concurrency)
+            self._runner = _executor(callbacks, self._run_options)
             return None
         except BaseException as exc:
             self._closed = True
@@ -457,7 +619,8 @@ class ToolStreamRunnerIterator[RawItemT]:
 
         Generation events are forwarded unchanged. Once the generation
         stream completes successfully, callback results are yielded in
-        the order of the corresponding tool calls.
+        the order of the corresponding tool calls, or as each callback
+        finishes when ``in_order`` is ``False``.
 
         Returns:
             The next generation event or tool result.
@@ -548,6 +711,9 @@ class ToolRunner[
         /,
         *,
         concurrency: int = 1,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         model: str,
         input: str | Sequence[InputItem],
         instructions: str | MISSING = MISSING,
@@ -569,6 +735,9 @@ class ToolRunner[
         /,
         *,
         concurrency: int = 1,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         provider_options: OptionsT | MISSING = MISSING,
         **options: Unpack[CallOptions],
     ) -> ToolRunnerIterator[RawT]: ...
@@ -579,6 +748,9 @@ class ToolRunner[
         /,
         *,
         concurrency: int = 1,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         headers: HeadersType | None = None,
         timeout: Timeout | None = None,
         retry_policy: RetryPolicy | None = None,
@@ -591,6 +763,18 @@ class ToolRunner[
             request: What to generate, as a ready request.
             concurrency: Maximum number of callbacks executing concurrently.
                 Defaults to ``1``, which executes them sequentially.
+            buffer_size: Finished results kept beyond ``concurrency``
+                before the next callback waits for the consumer; with
+                ``0``, a finished result that has not been read yet still
+                takes one of the ``concurrency`` slots.
+            in_order: Yield results in tool-call order (the default);
+                ``False`` yields each as soon as its callback finishes.
+            on_error: Called with the exception of a callback, or of
+                serializing its output, that failed with an
+                ``Exception``; what it returns is that call's output
+                (a string as is, anything else as JSON), so the model
+                reads the failure and the other callbacks go on.
+                ``None`` (the default) raises the failure instead.
             headers: Headers for this request only.
             timeout: Seconds for this request instead of the session's
                 limit; ``None`` to keep it.
@@ -611,12 +795,14 @@ class ToolRunner[
         Raises:
             TypeError: Both a request and fields are given, or a tool lacks
                 an associated callback.
-            ValueError: ``concurrency`` is less than ``1``, no tools were
+            ValueError: ``concurrency`` is less than ``1``,
+                ``buffer_size`` is negative, no tools were
                 provided in the request, or the response references an
                 unknown tool.
             CallbackExceptionGroup: Raised while iterating: the failures
-                of callbacks or of serializing their output, after the
-                unfinished callbacks have been cancelled; a cancellation
+                of callbacks or of serializing their output (without
+                ``on_error``, or raised by it), after the unfinished
+                callbacks have been cancelled; a cancellation
                 inside a callback that the runner did not request is a
                 ``CallbackCancelledError`` among them.
             CancelledError: The consumer was cancelled, after unfinished
@@ -626,7 +812,12 @@ class ToolRunner[
                 one of the provider's options, or a value is invalid;
                 raised before anything is sent.
         """
-        _check_concurrency(concurrency)
+        run_options = _RunOptions(
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+            in_order=in_order,
+            on_error=on_error,
+        )
         request = make_request(request, fields)
         tools = grab_tools(request)
 
@@ -647,7 +838,10 @@ class ToolRunner[
         return ToolRunnerIterator[RawT](
             callbacks,
             response,
-            concurrency=concurrency,
+            concurrency=run_options.concurrency,
+            buffer_size=run_options.buffer_size,
+            in_order=run_options.in_order,
+            on_error=run_options.on_error,
         )
 
     @overload
@@ -656,6 +850,9 @@ class ToolRunner[
         /,
         *,
         concurrency: int = 1,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         model: str,
         input: str | Sequence[InputItem],
         instructions: str | MISSING = MISSING,
@@ -677,6 +874,9 @@ class ToolRunner[
         /,
         *,
         concurrency: int = 1,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         provider_options: OptionsT | MISSING = MISSING,
         **options: Unpack[CallOptions],
     ) -> AbstractAsyncContextManager[ToolStreamRunnerIterator[RawItemT]]: ...
@@ -688,6 +888,9 @@ class ToolRunner[
         /,
         *,
         concurrency: int = 1,
+        buffer_size: int = 0,
+        in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         headers: HeadersType | None = None,
         timeout: Timeout | None = None,
         retry_policy: RetryPolicy | None = None,
@@ -702,6 +905,18 @@ class ToolRunner[
             request: What to generate, as a ready request.
             concurrency: Maximum number of callbacks executing concurrently.
                 Defaults to ``1``, which executes them sequentially.
+            buffer_size: Finished results kept beyond ``concurrency``
+                before the next callback waits for the consumer; with
+                ``0``, a finished result that has not been read yet still
+                takes one of the ``concurrency`` slots.
+            in_order: Yield results in tool-call order (the default);
+                ``False`` yields each as soon as its callback finishes.
+            on_error: Called with the exception of a callback, or of
+                serializing its output, that failed with an
+                ``Exception``; what it returns is that call's output
+                (a string as is, anything else as JSON), so the model
+                reads the failure and the other callbacks go on.
+                ``None`` (the default) raises the failure instead.
             headers: Headers for this request only.
             timeout: Seconds for this request instead of the session's
                 limit; ``None`` to keep it.
@@ -722,12 +937,14 @@ class ToolRunner[
         Raises:
             TypeError: Both a request and fields are given, or a tool lacks
                 an associated callback.
-            ValueError: ``concurrency`` is less than ``1``, no tools were
+            ValueError: ``concurrency`` is less than ``1``,
+                ``buffer_size`` is negative, no tools were
                 provided in the request, or a tool call references an
                 unknown tool.
             CallbackExceptionGroup: Raised while iterating: the failures
-                of callbacks or of serializing their output, after the
-                unfinished callbacks have been cancelled; a cancellation
+                of callbacks or of serializing their output (without
+                ``on_error``, or raised by it), after the unfinished
+                callbacks have been cancelled; a cancellation
                 inside a callback that the runner did not request is a
                 ``CallbackCancelledError`` among them.
             CancelledError: The consumer was cancelled, after unfinished
@@ -737,7 +954,12 @@ class ToolRunner[
                 one of the provider's options, or a value is invalid;
                 raised before anything is sent.
         """
-        _check_concurrency(concurrency)
+        run_options = _RunOptions(
+            concurrency=concurrency,
+            buffer_size=buffer_size,
+            in_order=in_order,
+            on_error=on_error,
+        )
         request = make_request(request, fields)
         tools = grab_tools(request)
         response = self.resource.stream(
@@ -750,7 +972,10 @@ class ToolRunner[
         iterator = ToolStreamRunnerIterator[RawItemT](
             response,
             tools,
-            concurrency=concurrency,
+            concurrency=run_options.concurrency,
+            buffer_size=run_options.buffer_size,
+            in_order=run_options.in_order,
+            on_error=run_options.on_error,
         )
         try:
             yield iterator
