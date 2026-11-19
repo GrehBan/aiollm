@@ -17,6 +17,7 @@ error, so nothing is dropped silently.
 Usage::
 
     uv run python -m tests.providers.contracts.update [DOCS_LITE_DIR]
+    uv run python -m tests.providers.contracts.update --openapi-only
 
 Without an argument the dump is found through ``DOCS_LITE_DIR``, or
 next to ``DOCS_SUITE_MCP_DIR`` (the variable ``.mcp.json`` uses).
@@ -117,6 +118,27 @@ def redact(value: Any) -> Any:
     return value
 
 
+@dataclass(frozen=True)
+class OpenAPIEndpoints:
+    """A group of endpoints snapshotted from one OpenAPI file, no docs-lite.
+
+    Attributes:
+        provider: Provider id.
+        name: Folder name of the snapshot.
+        operations: The ``operationId`` of every endpoint, in order.
+        variable: Environment variable with the file's path, or
+            ``None`` for a file kept in this folder.
+        file: The file, relative to this folder, when ``variable`` is
+            ``None``.
+    """
+
+    provider: str
+    name: str
+    operations: tuple[str, ...]
+    variable: str | None = None
+    file: str | None = None
+
+
 ENDPOINTS: Final = (
     Endpoint(
         provider="openai",
@@ -140,6 +162,39 @@ ENDPOINTS: Final = (
     ),
 )
 """Endpoints the library implements."""
+
+FILES_OPERATIONS: Final = (
+    "createFile",
+    "listFiles",
+    "retrieveFile",
+    "deleteFile",
+    "downloadFile",
+)
+"""The operations of the Files APIs, named alike for both providers."""
+
+OPENAPI_ENDPOINTS: Final = (
+    OpenAPIEndpoints(
+        provider="openai",
+        name="files",
+        operations=FILES_OPERATIONS,
+        variable="OPENAI_OPENAPI",
+    ),
+    OpenAPIEndpoints(
+        provider="anthropic",
+        name="files",
+        operations=FILES_OPERATIONS,
+        file="sources/anthropic-files.openapi.json",
+    ),
+)
+"""Endpoint groups taken from an OpenAPI file alone.
+
+Anthropic publishes no OpenAPI file and docs-lite has no schemas of its
+Files API, so its file is a transcription of the API reference
+(``sources/``, with the pages and the date in its ``info``).
+"""
+
+METHODS: Final = ("get", "post", "put", "patch", "delete")
+"""HTTP methods of an OpenAPI path item."""
 
 
 def type_tags(schema: Any) -> set[str]:
@@ -625,6 +680,322 @@ def snapshot(
     }
 
 
+def class_name(operation_id: str) -> str:
+    """Name an operation's parameters the way aiollm-codegen does.
+
+    Args:
+        operation_id: Such as ``listFiles``.
+
+    Returns:
+        Such as ``ListFilesParams``.
+    """
+    return operation_id[:1].upper() + operation_id[1:] + "Params"
+
+
+def operations_of(
+    spec: dict[str, Any], names: tuple[str, ...]
+) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    """Find operations of an OpenAPI file by their ids.
+
+    Args:
+        spec: The decoded file.
+        names: The ``operationId`` values.
+
+    Returns:
+        Each operation and its path item, by id, in the given order;
+        the operation also carries its ``x-path`` and ``x-method``.
+
+    Raises:
+        SystemExit: An operation is not in the file.
+    """
+    found: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for path, item in spec["paths"].items():
+        for method in METHODS:
+            operation = item.get(method)
+            if operation and operation.get("operationId") in names:
+                where = {"x-path": path, "x-method": method.upper()}
+                found[operation["operationId"]] = (
+                    {**operation, **where},
+                    item,
+                )
+    if missing := [name for name in names if name not in found]:
+        message = f"operations not in the file: {missing}"
+        raise SystemExit(message)
+    return {name: found[name] for name in names}
+
+
+def operation_parameters(
+    operation: dict[str, Any], item: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """List an operation's parameters, its path item's included.
+
+    An operation's parameter replaces the path item's one of the same
+    ``name`` and ``in``, as OpenAPI defines.
+
+    Args:
+        operation: The operation.
+        item: Its path item.
+
+    Returns:
+        The parameters, path item's first.
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for parameter in [
+        *item.get("parameters", []),
+        *operation.get("parameters", []),
+    ]:
+        merged[parameter["name"], parameter["in"]] = parameter
+    return list(merged.values())
+
+
+def parameters_schema(
+    spec: dict[str, Any],
+    operation: dict[str, Any],
+    item: dict[str, Any],
+) -> tuple[dict[str, Any], set[str]]:
+    """Describe an operation's request fields as one object schema.
+
+    Path and query parameters are properties under their wire names; a
+    request body's object properties join them, as they do in the
+    method aiollm-codegen makes of the operation.
+
+    Args:
+        spec: The decoded OpenAPI file.
+        operation: The operation.
+        item: Its path item, whose parameters it inherits.
+
+    Returns:
+        The object schema, and the components its body refers to.
+    """
+    components: dict[str, Any] = spec["components"]["schemas"]
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    roots: set[str] = set()
+
+    for parameter in operation_parameters(operation, item):
+        if parameter.get("in") not in ("path", "query"):
+            continue
+        name = parameter["name"]
+        properties[name] = json_schema(parameter["schema"], components)
+        if parameter.get("required"):
+            required.append(name)
+
+    body = operation.get("requestBody", {}).get("content", {})
+    for media in body.values():
+        reference = media["schema"]["$ref"]
+        root = reference.removeprefix(COMPONENTS)
+        roots.add(root)
+        component = components[root]
+        properties.update(
+            json_schema(component.get("properties", {}), components)
+        )
+        required.extend(component.get("required", []))
+
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = list(dict.fromkeys(required))
+    return schema, roots
+
+
+def operation_shape(
+    operation: dict[str, Any], item: dict[str, Any]
+) -> dict[str, Any]:
+    """Describe how an operation is sent and what it returns.
+
+    Args:
+        operation: The operation, with its ``x-path`` and ``x-method``.
+        item: Its path item, whose parameters it inherits.
+
+    Returns:
+        Its HTTP method, path template, path and query parameters, the
+        media types of its body and of its ``200`` response, and the
+        component the JSON response refers to.
+    """
+    parameters = operation_parameters(operation, item)
+    body = operation.get("requestBody", {}).get("content", {})
+    result = operation["responses"]["200"].get("content", {})
+    roots = [
+        media["schema"]["$ref"].removeprefix(COMPONENTS)
+        for media in json_responses(operation)
+    ]
+    return {
+        "method": operation["x-method"],
+        "path": operation["x-path"],
+        "path_parameters": [
+            p["name"] for p in parameters if p.get("in") == "path"
+        ],
+        "query": sorted(
+            p["name"] for p in parameters if p.get("in") == "query"
+        ),
+        "body": sorted(body),
+        "response": sorted(result),
+        "schema": roots[0] if roots else None,
+    }
+
+
+def json_responses(operation: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield the JSON media of an operation's ``200`` response.
+
+    Args:
+        operation: The operation.
+
+    Yields:
+        The ``application/json`` media object, if there is one.
+    """
+    content = operation["responses"]["200"].get("content", {})
+    if "application/json" in content:
+        yield content["application/json"]
+
+
+def response_example(operation: dict[str, Any]) -> Any:
+    """Read the documented response of an operation.
+
+    Args:
+        operation: The operation.
+
+    Returns:
+        The decoded example: the JSON media's ``example``, or OpenAI's
+        ``x-oaiMeta`` response text; ``None`` without one.
+    """
+    for media in json_responses(operation):
+        if "example" in media:
+            return media["example"]
+    text = operation.get("x-oaiMeta", {}).get("examples", {}).get("response")
+    if isinstance(text, str):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def read_spec(group: OpenAPIEndpoints) -> tuple[Path, dict[str, Any]]:
+    """Read the OpenAPI file of an endpoint group.
+
+    Args:
+        group: The endpoint group.
+
+    Returns:
+        The file's path and its decoded content.
+
+    Raises:
+        SystemExit: The environment variable is not set.
+    """
+    if group.variable is None:
+        assert group.file is not None
+        path = CONTRACTS / group.file
+        return path, read_json(path)
+    if group.variable not in os.environ:
+        message = (
+            f"set {group.variable} to the provider's official OpenAPI file"
+        )
+        raise SystemExit(message)
+    path = Path(os.environ[group.variable])
+    return path, yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def snapshot_openapi(group: OpenAPIEndpoints) -> dict[str, Any]:
+    """Write the snapshot of an endpoint group from its OpenAPI file.
+
+    ``request.schema.json`` holds one object per operation, named like
+    the method's parameters (``ListFilesParams``), and the components a
+    body refers to; ``response.schema.json`` is the union of the JSON
+    results with every component they reference; ``operations.json``
+    says how each operation is sent and what it returns
+    (``operation_shape``); ``responses.json`` keeps the documented
+    results the schema accepts.
+
+    Args:
+        group: The endpoint group.
+
+    Returns:
+        The group's manifest entry.
+    """
+    path, spec = read_spec(group)
+    components: dict[str, Any] = spec["components"]["schemas"]
+    operations = operations_of(spec, group.operations)
+
+    requests: dict[str, Any] = {}
+    request_roots: set[str] = set()
+    results: list[str] = []
+    for name, (operation, item) in operations.items():
+        requests[class_name(name)], roots = parameters_schema(
+            spec, operation, item
+        )
+        request_roots |= roots
+        for media in json_responses(operation):
+            root = media["schema"]["$ref"].removeprefix(COMPONENTS)
+            if root not in results:
+                results.append(root)
+
+    referenced = set().union(
+        *(component_closure(components, root) for root in request_roots)
+    )
+    requests.update(
+        {
+            name: json_schema(components[name], components)
+            for name in sorted(referenced)
+        }
+    )
+    request = {"$defs": dict(sorted(requests.items()))}
+    response = {
+        "anyOf": [{"$ref": f"#/$defs/{root}"} for root in results],
+        "$defs": {
+            name: json_schema(components[name], components)
+            for name in sorted(
+                set().union(
+                    *(component_closure(components, root) for root in results)
+                )
+            )
+        },
+    }
+    target = CONTRACTS / group.provider / group.name
+    write_json(target / "request.schema.json", request)
+    write_json(target / "response.schema.json", response)
+    write_json(
+        target / "operations.json",
+        {
+            name: operation_shape(operation, item)
+            for name, (operation, item) in operations.items()
+        },
+    )
+
+    validator = Draft202012Validator(response)
+    kept: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for name, (operation, _) in operations.items():
+        body = response_example(operation)
+        if body is None:
+            continue
+        error = first_error(validator, body)
+        if error is not None:
+            rejected.append({"id": name, "group": "responses", "error": error})
+            continue
+        kept.append({"id": name, "source": "openapi", "body": body})
+    write_json(target / "responses.json", kept)
+
+    info = spec.get("info", {})
+    return {
+        "operations": list(group.operations),
+        "openapi": {
+            "file": path.name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "openapi": spec.get("openapi"),
+            "version": info.get("version"),
+            **(
+                {
+                    "sources": info["x-sources"],
+                    "retrieved": info["x-retrieved"],
+                }
+                if "x-sources" in info
+                else {}
+            ),
+        },
+        "responses": len(kept),
+        "rejected": rejected,
+    }
+
+
 def find_docs(argv: list[str]) -> Path:
     """Find the ``docs-lite`` folder.
 
@@ -674,33 +1045,41 @@ def revision(docs: Path) -> str | None:
 
 
 def main(argv: list[str]) -> None:
-    """Rebuild every snapshot and the manifest.
+    """Rebuild the snapshots and the manifest.
+
+    With ``--openapi-only`` only ``OPENAPI_ENDPOINTS`` are rebuilt, which
+    needs no docs-lite folder; the other manifest entries are kept.
 
     Args:
         argv: Command-line arguments without the program name.
     """
-    docs = find_docs(argv)
-    fixtures = read_json(docs / "_meta" / "fixtures.json")["fixtures"]
-    endpoints = {
-        f"{endpoint.provider}/{endpoint.name}": snapshot(
-            docs, endpoint, fixtures
-        )
-        for endpoint in ENDPOINTS
-    }
-    write_json(
-        MANIFEST,
-        {
+    manifest: dict[str, Any]
+    if argv[:1] == ["--openapi-only"]:
+        manifest = read_json(MANIFEST)
+    else:
+        docs = find_docs(argv)
+        fixtures = read_json(docs / "_meta" / "fixtures.json")["fixtures"]
+        manifest = {
             "docs_revision": revision(docs),
             "sdk_versions": read_json(docs / "_meta" / "enrichment.json")[
                 "sdk_versions"
             ],
-            "endpoints": endpoints,
-        },
-    )
-    for name, entry in endpoints.items():
+            "endpoints": {
+                f"{endpoint.provider}/{endpoint.name}": snapshot(
+                    docs, endpoint, fixtures
+                )
+                for endpoint in ENDPOINTS
+            },
+        }
+    for group in OPENAPI_ENDPOINTS:
+        manifest["endpoints"][f"{group.provider}/{group.name}"] = (
+            snapshot_openapi(group)
+        )
+    write_json(MANIFEST, manifest)
+    for name, entry in manifest["endpoints"].items():
         sys.stdout.write(
             f"{name}: {entry['responses']} responses, "
-            f"{entry['events']} events, "
+            f"{entry.get('events', 0)} events, "
             f"{len(entry['rejected'])} rejected\n"
         )
 

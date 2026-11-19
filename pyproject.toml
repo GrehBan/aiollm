@@ -114,7 +114,7 @@ test = [
 ]
 
 [tool.uv.sources]
-aiollm-codegen = { git = "https://github.com/GrehBan/aiollm_codegen", rev = "e1171eaef36db7cbc05d74b17b8e2cbbbbdf1a84" }
+aiollm-codegen = { git = "https://github.com/GrehBan/aiollm_codegen", rev = "e8702bffd3e623d03f3285fb4727f11892b75772" }
 
 [tool.ruff]
 line-length = 79

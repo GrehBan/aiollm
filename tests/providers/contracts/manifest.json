@@ -166,6 +166,49 @@
      "error": "{'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}} is not valid under any of the given schemas"
     }
    ]
+  },
+  "openai/files": {
+   "operations": [
+    "createFile",
+    "listFiles",
+    "retrieveFile",
+    "deleteFile",
+    "downloadFile"
+   ],
+   "openapi": {
+    "file": "openapi.yaml",
+    "sha256": "cf91be897ab55e4aefcfc44ec1eb7611eea1227509b67178be583244c2680ab3",
+    "openapi": "3.1.0",
+    "version": "2.3.0"
+   },
+   "responses": 4,
+   "rejected": []
+  },
+  "anthropic/files": {
+   "operations": [
+    "createFile",
+    "listFiles",
+    "retrieveFile",
+    "deleteFile",
+    "downloadFile"
+   ],
+   "openapi": {
+    "file": "anthropic-files.openapi.json",
+    "sha256": "43ae03117a6e3fd31785cb6eb776460bf033bc59340d763cd0e7644e77072159",
+    "openapi": "3.1.0",
+    "version": "2026-10-21",
+    "sources": [
+     "https://platform.claude.com/docs/en/api/files/upload",
+     "https://platform.claude.com/docs/en/api/files/list",
+     "https://platform.claude.com/docs/en/api/files/retrieve_metadata",
+     "https://platform.claude.com/docs/en/api/files/download",
+     "https://platform.claude.com/docs/en/api/files/delete",
+     "https://platform.claude.com/docs/en/build-with-claude/files"
+    ],
+    "retrieved": "2026-11-19"
+   },
+   "responses": 3,
+   "rejected": []
   }
  }
 }

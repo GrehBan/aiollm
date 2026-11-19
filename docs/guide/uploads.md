@@ -46,3 +46,5 @@ How files behave on retry, and why:
 A text stream raises `ValidationError` when the method is created, and so does a `str` in an `InputFile` field: it could be a path or the content itself, so give a path as a `pathlib.Path`. Files in a JSON or URL-encoded body raise `TypeError`.
 
 Files other than `BytesFile` are sent with chunked transfer encoding, so they are never read into memory as a whole. If a server requires `Content-Length`, as some presigned upload URLs do, use `BytesFile`.
+
+To store a file at OpenAI or Anthropic and refer to it by id, see [Provider files](files.md).

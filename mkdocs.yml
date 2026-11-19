@@ -90,6 +90,7 @@ nav:
       - How a request flows: guide/request-flow.md
       - Methods: guide/methods.md
       - Uploads: guide/uploads.md
+      - Provider files: guide/files.md
       - Streaming: guide/streaming.md
       - Errors and retries: guide/errors.md
       - Sessions: guide/sessions.md

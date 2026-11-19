@@ -146,6 +146,8 @@ TOOLS_RUNNER_STREAM: Final = "tools_runner_stream.py"
 TOOLS_STREAM: Final = "tools_stream.py"
 TOOLS_MODEL: Final = "tools_model.py"
 RESOURCES: Final = "resources.py"
+OPENAI_FILES: Final = "openai_files.py"
+ANTHROPIC_FILES: Final = "anthropic_files.py"
 
 TESTED: Final = (
     QUICK_START,
@@ -176,6 +178,8 @@ TESTED: Final = (
     TOOLS_STREAM,
     TOOLS_MODEL,
     RESOURCES,
+    OPENAI_FILES,
+    ANTHROPIC_FILES,
 )
 """The title of every example a test below runs."""
 
@@ -1200,3 +1204,107 @@ async def test_resources(
         b'{"model":"example-1",'
         b'"messages":[{"role":"user","content":"Hi"}]}'
     )
+
+
+async def test_openai_files(
+    examples: Examples,
+    recorder: Recorder,
+    session: AiohttpSession,
+    tmp_path: Path,
+) -> None:
+    await examples.run(QUICK_START, CLIENT, OPENAI_FILES)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    file = {
+        "id": "file-1",
+        "object": "file",
+        "bytes": 8,
+        "created_at": 1,
+        "expires_at": 3601,
+        "filename": "report.pdf",
+        "purpose": "user_data",
+        "status": "processed",
+    }
+    page = {"object": "list", "data": [file], "first_id": "file-1"}
+    recorder.reply(
+        Reply(json=file),
+        Reply(json=openai_response(output=[openai_message("A report")])),
+        Reply(json={"id": "file-1", "object": "file", "deleted": True}),
+        Reply(json=page | {"last_id": "file-1", "has_more": True}),
+        Reply(json=page | {"last_id": "file-2", "has_more": False}),
+    )
+
+    assert await examples.summarize(session, path) == "A report"
+    assert await examples.all_file_ids(session) == ["file-1", "file-1"]
+    upload, ask, delete, first, second = recorder.requests
+    assert [(part.name, part.data) for part in upload.parts] == [
+        ("file", b"%PDF-1.4"),
+        ("purpose", b"user_data"),
+        ("expires_after[anchor]", b"created_at"),
+        ("expires_after[seconds]", b"3600"),
+    ]
+    assert upload.parts[0].filename == "report.pdf"
+    assert json.loads(ask.body)["input"][0]["content"] == [
+        {"type": "input_file", "file_id": "file-1"},
+        {"type": "input_text", "text": "Summarize it"},
+    ]
+    assert (delete.method, delete.raw_path) == ("DELETE", "/v1/files/file-1")
+    assert dict(first.query) == {"limit": "100"}
+    assert dict(second.query) == {"limit": "100", "after": "file-1"}
+
+
+async def test_anthropic_files(
+    examples: Examples,
+    recorder: Recorder,
+    session: AiohttpSession,
+    tmp_path: Path,
+) -> None:
+    await examples.run(QUICK_START, ANTHROPIC_FILES)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    file = {
+        "id": "file_1",
+        "type": "file",
+        "filename": "report.pdf",
+        "mime_type": "application/pdf",
+        "size_bytes": 8,
+        "created_at": "2026-11-19T00:00:00Z",
+        "downloadable": False,
+    }
+    message = {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [{"type": "text", "text": "A report"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 2},
+    }
+    recorder.reply(
+        Reply(json=file),
+        Reply(json=message),
+        Reply(json={"id": "file_1", "type": "file_deleted"}),
+        Reply(json={"data": [file], "next_page": "page_2"}),
+        Reply(json={"data": [file], "next_page": None}),
+        Reply(chunks=[b"chart", b" bytes"]),
+    )
+    target = tmp_path / "chart.png"
+
+    assert await examples.ask_about(session, path) == "A report"
+    assert await examples.all_claude_file_ids(session) == ["file_1"] * 2
+    assert await examples.download(session, "file_9", target) == 11
+    assert target.read_bytes() == b"chart bytes"
+    upload, ask, delete, first, second, content = recorder.requests
+    assert upload.headers["anthropic-version"] == "2026-10-21"
+    assert [(part.name, part.data) for part in upload.parts] == [
+        ("file", b"%PDF-1.4"),
+        ("expires_in_seconds", b"3600"),
+    ]
+    assert json.loads(ask.body)["messages"][0]["content"] == [
+        {"type": "document", "source": {"type": "file", "file_id": "file_1"}},
+        {"type": "text", "text": "Summarize it"},
+    ]
+    assert (delete.method, delete.raw_path) == ("DELETE", "/v1/files/file_1")
+    assert dict(first.query) == {"limit": "100"}
+    assert dict(second.query) == {"limit": "100", "page": "page_2"}
+    assert content.raw_path == "/v1/files/file_9/content"

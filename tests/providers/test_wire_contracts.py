@@ -245,6 +245,52 @@ ANTHROPIC = Case(
 CASES = [pytest.param(case, id=case.name) for case in (OPENAI, ANTHROPIC)]
 
 
+@dataclass(frozen=True)
+class ProviderTypes:
+    """Every generated model of a provider and the snapshots they mirror.
+
+    Attributes:
+        name: Provider id.
+        snapshots: Snapshot folders, ``<provider>/<endpoint>``, of every
+            endpoint the provider's types serve.
+        models: The modules of the response and event models.
+        params: The modules of the request parameter models.
+        covered: The methods whose fields
+            ``test_method_fields_match_the_request_schema`` checks; their
+            parameter mixins are left to that test. Every other parameter
+            model, such as ``ListFilesParams``, is checked here against
+            the ``$defs`` entry of its name.
+    """
+
+    name: str
+    snapshots: tuple[str, ...]
+    models: tuple[ModuleType, ...]
+    params: tuple[ModuleType, ...]
+    covered: tuple[type[BaseModel], ...]
+
+
+PROVIDER_TYPES = [
+    pytest.param(types, id=types.name)
+    for types in (
+        ProviderTypes(
+            name="openai",
+            snapshots=("openai/responses", "openai/files"),
+            models=OPENAI.models,
+            params=OPENAI.params,
+            covered=(OPENAI.create, OPENAI.stream),
+        ),
+        ProviderTypes(
+            name="anthropic",
+            snapshots=("anthropic/messages", "anthropic/files"),
+            models=ANTHROPIC.models,
+            params=ANTHROPIC.params,
+            covered=(ANTHROPIC.create, ANTHROPIC.stream),
+        ),
+    )
+]
+"""Each provider's types, checked against all of its snapshots."""
+
+
 @cache
 def load(name: str, file: str) -> Any:
     """Read one snapshot file.
@@ -775,13 +821,32 @@ REQUEST_FILES: Final = ("request.schema.json",)
 """The upstream schema of the request parameter models."""
 
 
-def upstream_definitions(
-    name: str, files: tuple[str, ...] = RESPONSE_FILES
-) -> dict[str, Any]:
-    """Collect the definitions of an endpoint's upstream schemas.
+def snapshot_schemas(
+    names: tuple[str, ...], files: tuple[str, ...]
+) -> Iterator[dict[str, Any]]:
+    """Read the schemas of several snapshots that exist.
 
     Args:
-        name: Snapshot folder, ``<provider>/<endpoint>``.
+        names: Snapshot folders, ``<provider>/<endpoint>``.
+        files: Schema file names; an endpoint without a stream has no
+            ``stream.schema.json``.
+
+    Yields:
+        Each schema.
+    """
+    for name in names:
+        for file in files:
+            if (CONTRACTS / name / file).is_file():
+                yield load(name, file)
+
+
+def upstream_definitions(
+    names: tuple[str, ...], files: tuple[str, ...] = RESPONSE_FILES
+) -> dict[str, Any]:
+    """Collect the definitions of endpoints' upstream schemas.
+
+    Args:
+        names: Snapshot folders, ``<provider>/<endpoint>``.
         files: The schemas to read: the response and stream ones, or
             the request one.
 
@@ -792,8 +857,7 @@ def upstream_definitions(
     """
     definitions: dict[str, Any] = {}
 
-    for file in files:
-        schema = load(name, file)
+    for schema in snapshot_schemas(names, files):
         definitions.update(schema.get("$defs", {}))
 
         if title := schema.get("title"):
@@ -869,23 +933,23 @@ def allows_null(node: Any, definitions: dict[str, Any]) -> bool:
 
 
 def provider_models(
-    case: Case, *, params: bool = False
+    types: ProviderTypes, *, params: bool = False
 ) -> Iterator[type[BaseAPIType]]:
-    """Find the models of an endpoint.
+    """Find the models of a provider.
 
     Args:
-        case: The endpoint.
+        types: The provider's types.
         params: Find the request parameter models instead of the
             response and event ones.
 
     Yields:
         Every ``BaseAPIType`` subclass defined in the endpoint's model
         modules, except the ``BaseUnknown`` ones, which keep whatever an
-        unknown ``type`` sends, and the methods' own parameter mixins,
-        whose fields the method checks cover.
+        unknown ``type`` sends, and the parameter mixins of the methods
+        ``test_method_fields_match_the_request_schema`` checks.
     """
-    mixins = {*case.create.__mro__, *case.stream.__mro__}
-    for module in case.params if params else case.models:
+    mixins = {base for method in types.covered for base in method.__mro__}
+    for module in types.params if params else types.models:
         for _, model in inspect.getmembers(module, inspect.isclass):
             if (
                 issubclass(model, BaseAPIType)
@@ -934,14 +998,14 @@ SIDES = [pytest.param(False, id="responses"), pytest.param(True, id="params")]
 
 
 @pytest.mark.parametrize("params", SIDES)
-@pytest.mark.parametrize("case", CASES)
+@pytest.mark.parametrize("types", PROVIDER_TYPES)
 def test_every_model_names_its_upstream_schema(
-    case: Case, params: bool
+    types: ProviderTypes, params: bool
 ) -> None:
     definitions = upstream_definitions(
-        case.name, REQUEST_FILES if params else RESPONSE_FILES
+        types.snapshots, REQUEST_FILES if params else RESPONSE_FILES
     )
-    models = list(provider_models(case, params=params))
+    models = list(provider_models(types, params=params))
     missing = [
         model.__name__
         for model in models
@@ -961,25 +1025,27 @@ def test_every_model_names_its_upstream_schema(
 
 
 @pytest.mark.parametrize("params", SIDES)
-@pytest.mark.parametrize("case", CASES)
-def test_models_accept_what_upstream_allows(case: Case, params: bool) -> None:
+@pytest.mark.parametrize("types", PROVIDER_TYPES)
+def test_models_accept_what_upstream_allows(
+    types: ProviderTypes, params: bool
+) -> None:
     # Validation of examples sees only the values the docs happen to
     # show; this compares every modeled field with the schema itself.
     # A response field may only be laxer than the schema, to read what
     # is sent; a request field follows it both ways: None only where null
     # is allowed, required only where it is.
     files = REQUEST_FILES if params else RESPONSE_FILES
-    definitions = upstream_definitions(case.name, files)
+    definitions = upstream_definitions(types.snapshots, files)
     # upstream_definitions reads a nullable object as the object; its
     # null is read from the definitions as they are.
     nullable = {
         name: definition
-        for file in files
-        for name, definition in load(case.name, file).get("$defs", {}).items()
+        for schema in snapshot_schemas(types.snapshots, files)
+        for name, definition in schema.get("$defs", {}).items()
     }
     problems: list[str] = []
 
-    for model in provider_models(case, params=params):
+    for model in provider_models(types, params=params):
         for name in upstream_names(model):
             definition = resolve(definitions[name], definitions)
             properties = definition.get("properties", {})
