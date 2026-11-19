@@ -6,6 +6,7 @@ from aiollm.adapters.base import (
     BaseAdapter,
     BaseCompositeAdapter,
     BaseConversion,
+    BaseFilesAdapter,
     BaseStreamAdapter,
 )
 from aiollm.adapters.protocols import (
@@ -20,6 +21,7 @@ __all__ = [
     "BaseAdapter",
     "BaseCompositeAdapter",
     "BaseConversion",
+    "BaseFilesAdapter",
     "BaseStreamAdapter",
     "IAdapter",
     "ICompositeAdapter",

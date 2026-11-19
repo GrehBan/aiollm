@@ -13,7 +13,7 @@ import re
 import sys
 import types
 from collections.abc import AsyncIterator, Iterator
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -148,6 +148,7 @@ TOOLS_MODEL: Final = "tools_model.py"
 RESOURCES: Final = "resources.py"
 OPENAI_FILES: Final = "openai_files.py"
 ANTHROPIC_FILES: Final = "anthropic_files.py"
+SHARED_FILES: Final = "shared_files.py"
 
 TESTED: Final = (
     QUICK_START,
@@ -180,6 +181,7 @@ TESTED: Final = (
     RESOURCES,
     OPENAI_FILES,
     ANTHROPIC_FILES,
+    SHARED_FILES,
 )
 """The title of every example a test below runs."""
 
@@ -1308,3 +1310,72 @@ async def test_anthropic_files(
     assert dict(first.query) == {"limit": "100"}
     assert dict(second.query) == {"limit": "100", "page": "page_2"}
     assert content.raw_path == "/v1/files/file_9/content"
+
+
+def claude_message(text: str) -> dict[str, Any]:
+    """A finished Anthropic message with one text block."""
+    return {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 2},
+    }
+
+
+async def test_shared_files(
+    examples: Examples,
+    recorder: Recorder,
+    api: LocalAPI,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    await examples.run(SHARED_FILES)
+    monkeypatch.setattr(anthropic_session_factory, "api", api)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"%PDF-1.4")
+    file = {
+        "id": "file_1",
+        "type": "file",
+        "filename": "report.pdf",
+        "mime_type": "application/pdf",
+        "size_bytes": 8,
+        "created_at": "2026-11-19T00:00:00Z",
+        "expires_at": "2026-11-19T01:00:00Z",
+    }
+    old = file | {"id": "file_0", "created_at": "2026-11-01T00:00:00Z"}
+    recorder.reply(
+        Reply(json=file),
+        Reply(json=claude_message("A report")),
+        Reply(json=claude_message("Two pages")),
+        Reply(json={"id": "file_1", "type": "file_deleted"}),
+        Reply(json={"data": [file], "next_page": "page_2"}),
+        Reply(json={"data": [old], "next_page": None}),
+    )
+
+    async with examples.AnthropicClient("sk-ant-...") as client:
+        answers = await examples.ask_about(
+            client, "claude-opus-5-5", path, ["What is it?", "How long?"]
+        )
+        old_files = await examples.files_before(
+            client, datetime(2026, 11, 10, tzinfo=UTC)
+        )
+
+    assert answers == ["A report", "Two pages"]
+    assert [ref.id for ref in old_files] == ["file_0"]
+    upload, first, second, delete = recorder.requests[:4]
+    assert [(part.name, part.data) for part in upload.parts] == [
+        ("file", b"%PDF-1.4"),
+        ("expires_in_seconds", b"3600"),
+    ]
+    for ask, question in ((first, "What is it?"), (second, "How long?")):
+        assert json.loads(ask.body)["messages"][0]["content"] == [
+            {
+                "type": "document",
+                "source": {"type": "file", "file_id": "file_1"},
+            },
+            {"type": "text", "text": question},
+        ]
+    assert (delete.method, delete.raw_path) == ("DELETE", "/v1/files/file_1")

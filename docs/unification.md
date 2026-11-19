@@ -1,6 +1,6 @@
 # Unification: what the shared types promise
 
-`client.generation` speaks shared types (`GenerationRequest`, `GenerationResponse`, `GenerationEvent`) for every provider. This page lists, field by field, what each shared field becomes for each provider, what is lost on the way, and when a request or a response raises instead.
+`client.generation` speaks shared types (`GenerationRequest`, `GenerationResponse`, `GenerationEvent`) for every provider, and so does `client.files` (`FileUpload`, `StoredFile`, `ProviderFile`). This page lists, field by field, what each shared field becomes for each provider, what is lost on the way, and when a request or a response raises instead.
 
 Two rules decide what is shared:
 
@@ -58,21 +58,42 @@ Two rules decide what is shared:
 
 ## Content parts
 
-`Turn.content` is a text or a list of parts, at least one, and only a `user` turn takes parts. An image or a document is its bytes (sent inline, in base64) or a URL the provider downloads it from, exactly one of them; `ImagePart.load(path)` and `DocumentPart.load(path)` read a file in a worker thread. Each provider limits the size of a request, of an image and of a document, and answers 400, an `APIStatusError`, past them; the parts are not checked against those limits.
+`Turn.content` is a text or a list of parts, at least one, and only a `user` turn takes parts. An image or a document is its bytes (sent inline, in base64), a URL the provider downloads it from, or a file stored with the provider (see [Stored files](#stored-files)), exactly one of them; `ImagePart.load(path)` and `DocumentPart.load(path)` read a file in a worker thread. Each provider limits the size of a request, of an image and of a document, and answers 400, an `APIStatusError`, past them; the parts are not checked against those limits.
 
 | Shared field | OpenAI | Anthropic | Lost, or when it raises |
 | --- | --- | --- | --- |
 | `TextPart.type` | `input_text` | `text` | — |
 | `TextPart.text` | `text` | `text` | — |
-| `ImagePart.type` | `input_image`, with `detail: "auto"`, OpenAI's default, which its schema requires | `image` | OpenAI's `detail` and both providers' file ids are not shared. |
+| `ImagePart.type` | `input_image`, with `detail: "auto"`, OpenAI's default, which its schema requires | `image` | OpenAI's `detail` is not shared. |
 | `ImagePart.data` | `image_url`: a `data:` URL, the bytes in base64 | `source`: `base64` with `media_type` and `data` | Not empty. |
 | `ImagePart.url` | `image_url` | `source`: `url` | An `http` or `https` URL. |
-| `ImagePart.media_type` | In the `data:` URL | `source.media_type` | JPEG, PNG, GIF or WebP, the formats both take; required with `data`, refused with `url`. |
+| `ImagePart.file` | `file_id` | `source`: `file` with `file_id` | A `ProviderFile` of the provider the request goes to; another provider's raises `RequestValidationError`. |
+| `ImagePart.media_type` | In the `data:` URL | `source.media_type` | JPEG, PNG, GIF or WebP, the formats both take; required with `data`, refused with `url` and `file`. |
 | `DocumentPart.type` | `input_file` | `document` | PDF only: Anthropic's text documents and OpenAI's other file types are not shared. |
 | `DocumentPart.data` | `file_data`: a `data:` URL, the bytes in base64 | `source`: `base64` with `media_type` and `data` | Not empty. |
 | `DocumentPart.url` | `file_url` | `source`: `url` | An `http` or `https` URL. |
+| `DocumentPart.file` | `file_id` | `source`: `file` with `file_id` | As `ImagePart.file`; the provider shows the model the name it stored. |
 | `DocumentPart.media_type` | In the `data:` URL | `source.media_type` | Always `application/pdf`. |
 | `DocumentPart.filename` | `filename`; `document.pdf` when not given, since OpenAI wants one with `file_data` | `title` | The document's name, which both show the model. Only with `data`. |
+
+## Stored files
+
+`client.files` stores files with OpenAI's `/files` (`CreateFile`, `RetrieveFile`, `ListFiles`, `DeleteFile`, `DownloadFile`) and Anthropic's `/files` (the methods of the same names). A stored file is named by a `ProviderFile`, which a part takes as `file=`; a `ProviderFile` of another provider raises `RequestValidationError` before anything is sent, from `client.files` and from `client.generation` alike. The library deletes nothing by itself.
+
+| Shared field | OpenAI | Anthropic | Lost, or when it raises |
+| --- | --- | --- | --- |
+| `FileUpload.file` | `file` | `file` | The multipart part's `filename` is the name the provider keeps. OpenAI's `purpose` is a provider option, `user_data` (a model's input) when not given. |
+| `FileUpload.expires_in_seconds` | `expires_after`: `{"anchor": "created_at", "seconds": ...}`, 3600 to 2 592 000 | `expires_in_seconds`, 3600 to 7 776 000 | Positive; outside the provider's range raises `RequestValidationError`. Not sent when not given, so the file is kept until it is deleted. |
+| `ProviderFile.provider` | `Provider.OPENAI` | `Provider.ANTHROPIC` | The provider that stores the file. |
+| `ProviderFile.id` | `id` | `id` | Not empty. An id reaches every file of the project or workspace: never build one from an end user's input. |
+| `StoredFile.ref` | `id`, with the provider | `id`, with the provider | — |
+| `StoredFile.filename` | `filename` | `filename` | — |
+| `StoredFile.size` | `bytes` | `size_bytes` | `None` when OpenAI does not know the size yet. |
+| `StoredFile.created_at` | `created_at`, a Unix time, in UTC | `created_at`, in UTC | — |
+| `StoredFile.expires_at` | `expires_at`, a Unix time, in UTC | `expires_at`, in UTC | `None` if the file does not expire. |
+| `StoredFile.raw` | `OpenAIFile` | `FileMetadata` | OpenAI's `purpose` and `status`, Anthropic's `mime_type` and `downloadable` stay here. |
+
+`client.files.list()` goes through every page (OpenAI by `after` the last id while `has_more`, Anthropic by `next_page`), newest first. `download()` streams the content; OpenAI refuses a `user_data` file and Anthropic a file it did not make itself (code execution, skills); both answer 400, an `APIStatusError`.
 
 ## Tool calls
 
@@ -159,23 +180,30 @@ Every case below is raised before the request is sent (requests) or before the s
 | `parts-in-assistant-turn` | any | `input` | `ValidationError` |
 | `image-without-media-type` | any | `input` | `ValidationError` |
 | `image-of-unknown-format` | any | `input` | `ValueError` |
+| `part-with-two-sources` | any | `input` | `ValidationError` |
+| `part-with-another-providers-file` | any | `input` | `RequestValidationError` |
+| `files-call-with-another-providers-file` | any | `file` | `RequestValidationError` |
+| `openai-expiry-out-of-range` | OpenAI | `expires_in_seconds` | `RequestValidationError` |
+| `anthropic-expiry-out-of-range` | Anthropic | `expires_in_seconds` | `RequestValidationError` |
 
 ## Provider options
 
-Not shared, but reachable through `client.generation`: `create(..., provider_options={...})` and `stream(...)` send a provider's own fields with that call. Each key is a field of the provider's method with its type, and none is a field the shared request fills, which `tests/providers/test_provider_options.py` checks.
+Not shared, but reachable through `client.generation`: `create(..., provider_options={...})` and `stream(...)` send a provider's own fields with that call, as `client.files.upload(..., provider_options={...})` does for an upload. Each key is a field of the provider's method with its type, and none is a field the shared request fills, which `tests/providers/test_provider_options.py` checks.
 
 | Provider | Options type | Keys |
 |---|---|---|
 | OpenAI | `OpenAIGenerationOptions` | `metadata`, `reasoning` (`summary`, `context`, `mode`; its `effort` is the shared field, and the two are merged), `store`, `previous_response_id`, `temperature`, `top_p`, `include` (such as `reasoning.encrypted_content` for a stateless tool loop), `max_tool_calls` |
 | Anthropic | `AnthropicGenerationOptions` | `stop_sequences`, `thinking` |
+| OpenAI, uploads | `OpenAIFileOptions` | `purpose` |
 
 ## Not unified
 
 These are reached only through the provider's own methods and types, or, where listed under [Provider options](#provider-options), through `provider_options`:
 
 - sampling parameters (`temperature`, `top_p`, `top_k`): Anthropic API version `2026-10-21` removed them; OpenAI's are provider options;
-- system or developer turns inside `input` (use `instructions`), audio, files other than PDF documents, images and files in `assistant` turns, files uploaded to a provider (OpenAI's `file_id`, Anthropic's Files API) and OpenAI's `detail`;
+- system or developer turns inside `input` (use `instructions`), audio, files other than PDF documents, images and files in `assistant` turns, and OpenAI's `detail`;
 - OpenAI's built-in tools (web search, file search, code interpreter, MCP, ...), Anthropic's server tools, OpenAI's `allowed_tools`, and tool results with images or files;
 - reasoning and thinking settings and their content, beyond `effort` and the summaries;
 - continuing a stored response (`previous_response_id`, `store`) and stop sequences, which are provider options;
-- background responses, cancellation and polling.
+- background responses, cancellation and polling;
+- listing stored files by OpenAI's `purpose` or Anthropic's `ids`, OpenAI's uploads in parts (`/uploads`), and the files that tools make (code execution, skills), whose ids stay in `raw`.

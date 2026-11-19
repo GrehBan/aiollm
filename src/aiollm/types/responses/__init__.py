@@ -18,6 +18,9 @@ from aiollm.types.responses.events import (
     ToolCallDoneEvent,
     ToolCallStartEvent,
 )
+from aiollm.types.responses.files import (
+    StoredFile,
+)
 from aiollm.types.responses.generation import (
     GenerationResponse,
     TokenUsage,
@@ -33,6 +36,7 @@ __all__ = [
     "OtherEvent",
     "RawResponseEvent",
     "ReasoningDeltaEvent",
+    "StoredFile",
     "TextDeltaEvent",
     "TokenUsage",
     "ToolCallDeltaEvent",

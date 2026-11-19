@@ -11,6 +11,7 @@ from typing_extensions import is_typeddict
 
 from aiollm.enums import Role
 from aiollm.exceptions import RequestValidationError
+from aiollm.types.requests.content import TextPart
 from aiollm.types.requests.generation import ToolCallTurn, ToolResult, Turn
 
 if TYPE_CHECKING:
@@ -233,6 +234,40 @@ def check_conversation(request: GenerationRequest, provider: Provider) -> None:
         )
     if problem is not None:
         raise RequestValidationError(problem, provider=provider, field="input")
+
+
+def check_files(request: GenerationRequest, provider: Provider) -> None:
+    """Check that every stored file a request names is the provider's.
+
+    A file id means nothing to another provider, which would answer 404
+    or, worse, find a file of its own by that id; so a part whose
+    ``file`` another provider stores is refused before anything is sent.
+
+    Args:
+        request: The shared request.
+        provider: Provider the request is for.
+
+    Raises:
+        RequestValidationError: A part names another provider's file.
+    """
+    if isinstance(request.input, str):
+        return
+    for index, item in enumerate(request.input):
+        if not isinstance(item, Turn) or isinstance(item.content, str):
+            continue
+        for part in item.content:
+            if isinstance(part, TextPart) or part.file is MISSING:
+                continue
+            file = part.file
+            if file.provider is provider:
+                continue
+            message = (
+                f"item {index} names a file stored by "
+                f"{file.provider.value}, not by {provider.value}"
+            )
+            raise RequestValidationError(
+                message, provider=provider, field="input"
+            )
 
 
 def _order_problem(items: Sequence[InputItem]) -> str | None:

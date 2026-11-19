@@ -2,7 +2,55 @@
 
 OpenAI and Anthropic keep files you upload and let a request refer to one by its id. A document sent this way is uploaded once instead of being encoded into every request as base64 by the [shared generation](generation.md) parts, which saves both the upload on each turn and the memory a large base64 body takes while it is built.
 
-Each provider has the same five methods, `CreateFile`, `ListFiles`, `RetrieveFile`, `DeleteFile` and `DownloadFile`, in its `methods` package. Their fields and result types are generated like the rest of the provider's types (see [Provider types](providers.md#provider-types)).
+`client.files` does it the same way for every provider, in shared types; under it, each provider has five methods, `CreateFile`, `ListFiles`, `RetrieveFile`, `DeleteFile` and `DownloadFile`, in its `methods` package, for what the shared layer leaves out. Their fields and result types are generated like the rest of the provider's types (see [Provider types](providers.md#provider-types)).
+
+## On every provider: `client.files`
+
+```python title="shared_files.py"
+from datetime import datetime
+from pathlib import Path
+
+from aiollm import DocumentPart, IFilesClient, ProviderFile, TextPart, Turn
+from aiollm.providers.anthropic import AnthropicClient
+from aiollm.providers.openai import OpenAIClient
+
+
+async def ask_about(
+    client: OpenAIClient | AnthropicClient,
+    model: str,
+    path: Path,
+    questions: list[str],
+) -> list[str | None]:
+    stored = await client.files.upload(path, expires_in_seconds=3600)
+    document = DocumentPart(file=stored.ref)
+    answers: list[str | None] = []
+    try:
+        for question in questions:
+            response = await client.generation.create(
+                model=model,
+                input=[Turn.user([document, TextPart(text=question)])],
+            )
+            answers.append(response.text)
+    finally:
+        await client.files.delete(stored.ref)
+    return answers
+
+
+async def files_before(
+    client: IFilesClient, moment: datetime
+) -> list[ProviderFile]:
+    return [
+        stored.ref
+        async for stored in client.files.list()
+        if stored.created_at < moment
+    ]
+```
+
+- **Uploaded once, sent by id.** `upload` takes an `InputFile`, `bytes`, a `pathlib.Path` or a binary stream (see [Uploading files](uploads.md)) and returns a `StoredFile`: `ref`, `filename`, `size`, `created_at` and `expires_at` in UTC, and the provider's own metadata in `raw`. Its `ref`, a `ProviderFile`, goes into `DocumentPart(file=...)` or `ImagePart(file=...)`; each request then carries the id instead of the file in base64.
+- **A file belongs to its provider.** A `ProviderFile` names its provider; one of another provider raises `RequestValidationError` before anything is sent, from `client.files` and from `client.generation` alike.
+- **Every page, one at a time.** `list()` is an async iterator over all stored files, newest first; the next page is asked for when the last file of a page has been taken.
+- **OpenAI's `purpose`.** An upload to OpenAI is a `user_data` file, the purpose of a model's input; `provider_options={"purpose": ...}` sets another. Anthropic's uploads take no options.
+- **What is not shared** stays with the provider's methods below: listing by OpenAI's `purpose` or Anthropic's `ids`, and the providers' other fields. [Unification](../unification.md#stored-files) lists what each shared field becomes.
 
 ## OpenAI
 
@@ -135,7 +183,7 @@ async def download(client: AnthropicClient, file_id: str, target: Path) -> int:
 
 ## On both providers
 
-- **An upload is never retried.** `CreateFile` sets `__retryable__ = False`: `POST /files` is not idempotent, and a retry after an answer was lost would store the file twice. A timeout or a broken connection can therefore leave a file stored whose id you never got: give a file an expiry (`expires_after`, `expires_in_seconds`) where that matters. Reading, listing, downloading and deleting are retried like other calls; a deletion retried after its answer was lost raises `NotFoundError`, since the file is already gone.
+- **An upload is never retried.** `CreateFile`, which `client.files.upload` sends, sets `__retryable__ = False`: `POST /files` is not idempotent, and a retry after an answer was lost would store the file twice. A timeout or a broken connection can therefore leave a file stored whose id you never got: give a file an expiry (`expires_after`, `expires_in_seconds`) where that matters. Reading, listing, downloading and deleting are retried like other calls; a deletion retried after its answer was lost raises `NotFoundError`, since the file is already gone.
 - **A file id is a server-side reference.** Every key of the OpenAI project or Anthropic workspace can read every file in it by id. Keep the ids your application uploaded and use only those; never take a file id from an end user, who could name somebody else's file.
 - **Nothing that names a file is logged.** The transport logs the declared path, `/files/{file_id}`, and never the id or the file name (see [Logging](sessions.md#logging)).
 - **Ids are path segments.** A `file_id` is percent-encoded into the path, so an id with a `/` in it cannot reach another endpoint.

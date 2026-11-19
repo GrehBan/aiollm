@@ -10,18 +10,34 @@ from typing import Any
 import pytest
 from pydantic import MISSING, ValidationError
 
-from aiollm import DocumentPart, ImagePart, TextPart, Turn
+from aiollm import (
+    DocumentPart,
+    ImagePart,
+    Provider,
+    ProviderFile,
+    TextPart,
+    Turn,
+)
 
 PNG = b"\x89PNG\r\n"
+FILE = ProviderFile(provider=Provider.OPENAI, id="file-abc123")
 
 
 @pytest.mark.parametrize(
     ("fields", "match"),
     [
-        ({}, "either data or url"),
+        ({}, "exactly one of data, url or file"),
         (
             {"data": PNG, "media_type": "image/png", "url": "https://a.io/x"},
-            "either data or url",
+            "exactly one of data, url or file",
+        ),
+        (
+            {"url": "https://a.io/x", "file": FILE},
+            "exactly one of data, url or file",
+        ),
+        (
+            {"file": FILE, "media_type": "image/png"},
+            "media_type goes with data",
         ),
         ({"data": b"", "media_type": "image/png"}, "data is empty"),
         ({"data": PNG}, "media_type goes with data"),
@@ -38,6 +54,8 @@ PNG = b"\x89PNG\r\n"
     ids=[
         "none",
         "both",
+        "url-and-file",
+        "file-type",
         "empty",
         "no-type",
         "url-type",
@@ -81,6 +99,23 @@ def test_a_document_takes_a_filename_with_data_only() -> None:
     assert (part.media_type, part.filename) == ("application/pdf", MISSING)
 
 
+def test_a_stored_file_is_a_source_of_its_own() -> None:
+    image = ImagePart(file=FILE)
+    document = DocumentPart(file=FILE)
+
+    assert image.file == document.file == FILE
+    assert (image.data, image.url, image.media_type) == (MISSING,) * 3
+    with pytest.raises(ValidationError, match="filename goes with data"):
+        DocumentPart(file=FILE, filename="r.pdf")
+
+
+def test_a_provider_file_needs_an_id_and_is_frozen() -> None:
+    with pytest.raises(ValidationError, match="at least 1 character"):
+        ProviderFile(provider=Provider.ANTHROPIC, id="")
+    with pytest.raises(ValidationError, match="frozen"):
+        FILE.id = "file-other"  # type: ignore[misc]
+
+
 def test_a_part_keeps_its_bytes_out_of_its_repr() -> None:
     assert "data" not in repr(ImagePart(data=PNG, media_type="image/png"))
 
@@ -91,6 +126,7 @@ def test_a_turn_of_parts_goes_through_json() -> None:
             TextPart(text="What is it?"),
             ImagePart(data=PNG, media_type="image/png"),
             DocumentPart(url="https://a.io/r.pdf"),
+            DocumentPart(file=FILE),
         )
     )
 

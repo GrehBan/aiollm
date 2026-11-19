@@ -30,8 +30,11 @@ from aiollm.providers.anthropic.types.options import (
     AnthropicGenerationOptions,
 )
 from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
-from aiollm.providers.openai.methods import CreateResponse
-from aiollm.providers.openai.types.options import OpenAIGenerationOptions
+from aiollm.providers.openai.methods import CreateFile, CreateResponse
+from aiollm.providers.openai.types.options import (
+    OpenAIFileOptions,
+    OpenAIGenerationOptions,
+)
 from aiollm.types.requests import GenerationRequest, NoProviderOptions, Tool
 
 CASES = [
@@ -149,6 +152,22 @@ def test_every_option_is_a_method_field_of_the_same_type(
     fields = method.model_fields
 
     assert hints
+    problems: list[str] = []
+    for name, annotation in hints.items():
+        assert name in fields, name
+        problems += mirrors(annotation, fields[name].annotation, name)
+
+    assert not problems, "\n".join(problems)
+
+
+def test_every_upload_option_is_a_field_of_create_file() -> None:
+    # The shared upload fills file and expires_after; the options give
+    # the rest of CreateFile, with its types.
+    hints = get_type_hints(OpenAIFileOptions)
+    fields = CreateFile.model_fields
+
+    assert hints
+    assert not {"file", "expires_after"} & hints.keys()
     problems: list[str] = []
     for name, annotation in hints.items():
         assert name in fields, name

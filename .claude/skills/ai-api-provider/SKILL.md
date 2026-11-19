@@ -47,6 +47,9 @@ Use `ai-api-endpoint` for each: types, methods, snapshot, `Case`, adapters.
 
 - `tests/providers/test_generation_contract.py`: add a `Case` - the same
   scenarios run against every provider's `client.generation`.
+- `tests/providers/test_files_contract.py`: add a `Case` when the provider
+  has a Files API (a `BaseFilesAdapter` bound as `files`) - the same
+  scenarios run against every provider's `client.files`.
 - `tests/providers/test_provider_clients.py`: add a `ClientCase`.
 - `test_<name>_client.py` keeps only what is the provider's own.
 - `docs/unification.md`: a column's worth of mapping for every shared field
