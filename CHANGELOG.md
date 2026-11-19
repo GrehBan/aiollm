@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.12.1] - 2026-11-19
+
+### Fixed
+
+- A blocking call that ran on after its caller was cancelled (an upload's
+  read or open, a synchronous tool callback) and failed after the coroutine
+  given to `asyncio.run` had returned was dropped silently: `asyncio.run`
+  cancelled the task that waited for it. The call is no longer a task, so
+  the loop, which waits for its worker threads before closing, reports the
+  failure through its exception handler as at any other time.
+- The tools guide said that the runner starts callbacks only while the
+  consumer waits for a result; entering `async with calls:` (or the first
+  read) already starts the first ones, up to `concurrency`.
+- `Tool.from_callable()` and `@tool` take a `functools.partial` (named after
+  the function it wraps, its bound arguments left out of the schema) and an
+  object with a `__call__` method (named after its class, read without
+  `self`); both raised `TypeError` before. The generated schema now says
+  `additionalProperties: false`, as the arguments were already validated
+  that way, and a strict tool whose callable takes `**kwargs`, which no
+  strict schema can describe, raises `TypeError` instead of getting a 400
+  from the provider.
+
 ## [0.12.0] - 2026-11-19
 
 ### Added
@@ -1223,7 +1245,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/GrehBan/aiollm/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/GrehBan/aiollm/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/GrehBan/aiollm/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/GrehBan/aiollm/compare/v0.11.0...v0.11.1
