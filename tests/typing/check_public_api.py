@@ -55,6 +55,7 @@ from aiollm.providers.anthropic.methods import (
 )
 from aiollm.providers.anthropic.methods.params import UserMessageParam
 from aiollm.providers.anthropic.types import (
+    FileMetadata,
     Message,
     MessageStreamEvent,
     Usage,
@@ -67,6 +68,7 @@ from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
 from aiollm.providers.openai.client import session_factory
 from aiollm.providers.openai.methods import CreateResponse, StreamResponse
 from aiollm.providers.openai.types import (
+    OpenAIFile,
     Response,
     ResponseStreamEvent,
     ResponseUsage,
@@ -78,6 +80,8 @@ from aiollm.resources import (
     BaseResource,
     BaseUseCase,
     GenerationResource,
+    IFilesClient,
+    IFilesResource,
     IGenerationResource,
     ISessionAccess,
     IStreamUseCase,
@@ -92,6 +96,7 @@ from aiollm.types.requests import (
     ImagePart,
     JSONValue,
     NoProviderOptions,
+    ProviderFile,
     TextPart,
     Tool,
     ToolCall,
@@ -102,6 +107,7 @@ from aiollm.types.responses import (
     GenerationEvent,
     GenerationResponse,
     OtherEvent,
+    StoredFile,
     TokenUsage,
 )
 
@@ -640,6 +646,38 @@ def clients_are_generation_clients(
     assert resource.session is openai.session
     any_generation_client(anthropic)
     any_generation_client(BaseClient(openai.session))  # type: ignore[arg-type]
+
+
+def any_files_client(client: IFilesClient) -> IFilesClient:
+    return client
+
+
+async def clients_are_files_clients(
+    openai: OpenAIClient,
+    anthropic: AnthropicClient,
+) -> None:
+    typed: IFilesClient[OpenAIFile] = openai
+    resource: IFilesResource[OpenAIFile] = typed.files
+    assert resource.session is openai.session
+    any_files_client(anthropic)
+    any_files_client(BaseClient(openai.session))  # type: ignore[arg-type]
+
+    stored = await anthropic.files.upload(b"%PDF", expires_in_seconds=3600)
+    assert_type(stored, StoredFile[FileMetadata])
+    assert_type(stored.ref, ProviderFile)
+    await openai.files.upload(b"%PDF", provider_options={"purpose": "vision"})
+    await openai.files.upload(
+        b"%PDF",
+        provider_options={"purpose": "photos"},  # type: ignore[arg-type]
+    )
+    await openai.files.upload("report.pdf")  # type: ignore[arg-type]
+    await openai.files.delete(stored.ref, timeout=5)
+    await openai.files.delete("file-abc")  # type: ignore[arg-type]
+    async for item in openai.files.list():
+        assert_type(item, StoredFile[OpenAIFile])
+    async with anthropic.files.download(stored.ref) as content:
+        assert_type(content, Stream[bytes])
+    DocumentPart(file=stored.ref)
 
 
 def session_factories_are_typed() -> None:

@@ -6,11 +6,17 @@ from aiollm.resources.base import (
     BaseResource,
     BaseSessionAccess,
 )
+from aiollm.resources.files import (
+    FilesResource,
+)
 from aiollm.resources.generation import (
     GenerationResource,
 )
 from aiollm.resources.protocols import (
     ICompositeUseCase,
+    IFilesAdapter,
+    IFilesClient,
+    IFilesResource,
     IGenerationAdapter,
     IGenerationClient,
     IGenerationResource,
@@ -40,9 +46,13 @@ __all__ = [
     "BaseSessionAccess",
     "BaseStreamUseCase",
     "BaseUseCase",
+    "FilesResource",
     "GenerationResource",
     "GenerationStream",
     "ICompositeUseCase",
+    "IFilesAdapter",
+    "IFilesClient",
+    "IFilesResource",
     "IGenerationAdapter",
     "IGenerationClient",
     "IGenerationResource",

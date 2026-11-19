@@ -90,6 +90,8 @@ from aiollm.methods.base import (
     BaseStreamMethod,
 )
 from aiollm.resources.protocols import (
+    IFilesClient,
+    IFilesResource,
     IGenerationAdapter,
     IGenerationClient,
     IGenerationResource,
@@ -135,6 +137,7 @@ from aiollm.types.requests.content import (
     ContentPart,
     DocumentPart,
     ImagePart,
+    ProviderFile,
     TextPart,
 )
 from aiollm.types.requests.generation import (
@@ -159,6 +162,9 @@ from aiollm.types.responses.events import (
     ToolCallDeltaEvent,
     ToolCallDoneEvent,
     ToolCallStartEvent,
+)
+from aiollm.types.responses.files import (
+    StoredFile,
 )
 from aiollm.types.responses.generation import (
     GenerationResponse,
@@ -218,6 +224,8 @@ __all__ = [
     "GenerationResponse",
     "GenerationStream",
     "Headers",
+    "IFilesClient",
+    "IFilesResource",
     "IGenerationAdapter",
     "IGenerationClient",
     "IGenerationResource",
@@ -235,6 +243,7 @@ __all__ = [
     "PathFile",
     "PermissionDeniedError",
     "Provider",
+    "ProviderFile",
     "QuotaExceededError",
     "RateLimitError",
     "ReasoningDeltaEvent",
@@ -247,6 +256,7 @@ __all__ = [
     "ServerSentEvent",
     "ServiceUnavailableError",
     "SessionMismatchWarning",
+    "StoredFile",
     "Stream",
     "StreamFile",
     "TextDeltaEvent",

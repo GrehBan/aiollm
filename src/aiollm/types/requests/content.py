@@ -13,6 +13,7 @@ from pydantic import (
     model_validator,
 )
 
+from aiollm.enums import Provider
 from aiollm.types.base import BaseAPIType
 from aiollm.types.files import PathFile, ThreadWork, guess_content_type
 
@@ -94,31 +95,68 @@ class TextPart(BaseAPIType):
     text: str
 
 
+class ProviderFile(BaseAPIType):
+    """A file stored by a provider, named by its id.
+
+    The id alone does not say whose it is, so the provider goes with
+    it: a part or a ``client.files`` call that names another provider's
+    file raises ``RequestValidationError`` before anything is sent,
+    instead of a 404 from the provider. ``StoredFile.ref`` is one.
+
+    An id refers to data that every key of the provider's project or
+    workspace can read: build one only from an id your application
+    uploaded, never from an id an end user gives.
+
+    Attributes:
+        provider: The provider that stores the file.
+        id: Its id there, such as OpenAI's ``file-...``.
+
+    Example:
+        >>> stored = await client.files.upload(Path("report.pdf"))
+        >>> DocumentPart(file=stored.ref)
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: Provider
+    id: Annotated[str, Field(min_length=1)]
+
+
 class _SourcePart(BaseAPIType):
-    """A part whose content is its bytes or a URL, exactly one of them.
+    """A part whose content is its bytes, a URL or a stored file.
+
+    Exactly one of the three is given.
 
     Attributes:
         data: The content, sent inline (base64).
         url: Where the provider downloads it from.
+        file: A file stored by the provider, sent by its id.
     """
 
     model_config = _CONFIG
 
     data: bytes | MISSING = Field(default=MISSING, repr=False)
     url: str | MISSING = Field(default=MISSING, pattern=URL_PATTERN)
+    file: ProviderFile | MISSING = MISSING
 
     @model_validator(mode="after")
     def _one_source(self) -> Self:
-        """Check that the part has its bytes or a URL, not both.
+        """Check that the part has exactly one source.
 
         Returns:
             The part.
 
         Raises:
-            ValueError: Neither or both are given, or ``data`` is empty.
+            ValueError: None or more than one of ``data``, ``url`` and
+                ``file`` is given, or ``data`` is empty.
         """
-        if (self.data is MISSING) == (self.url is MISSING):
-            message = "give either data or url"
+        given = [
+            source
+            for source in (self.data, self.url, self.file)
+            if source is not MISSING
+        ]
+        if len(given) != 1:
+            message = "give exactly one of data, url or file"
             raise ValueError(message)
         if self.data is not MISSING and not self.data:
             message = "data is empty"
@@ -129,19 +167,22 @@ class _SourcePart(BaseAPIType):
 class ImagePart(_SourcePart):
     """An image in a turn of the end user.
 
-    Give its bytes with their ``media_type``, or a URL the provider
-    downloads it from. JPEG, PNG, GIF and WebP are taken by both
-    providers; each limits the size and the number of images.
+    Give its bytes with their ``media_type``, a URL the provider
+    downloads it from, or a file stored by the provider
+    (``client.files.upload``). JPEG, PNG, GIF and WebP are taken by
+    both providers; each limits the size and the number of images.
 
     Attributes:
         type: Always ``"image"``.
         data: The image, sent inline (base64).
         url: Where the provider downloads it from.
+        file: An image stored by the provider, sent by its id.
         media_type: The format of ``data``; only with ``data``.
 
     Example:
         >>> ImagePart(data=png, media_type="image/png")
         >>> ImagePart(url="https://example.com/cat.jpg")
+        >>> ImagePart(file=stored.ref)
     """
 
     type: Literal["image"] = "image"
@@ -156,7 +197,7 @@ class ImagePart(_SourcePart):
 
         Raises:
             ValueError: ``data`` without ``media_type``, or a
-                ``media_type`` with a URL.
+                ``media_type`` with a URL or a file.
         """
         if (self.data is MISSING) != (self.media_type is MISSING):
             message = "media_type goes with data, and only with it"
@@ -204,20 +245,25 @@ class ImagePart(_SourcePart):
 class DocumentPart(_SourcePart):
     """A PDF document in a turn of the end user.
 
-    Give its bytes, or a URL the provider downloads it from. Both
-    providers read the text and the pages as images; each limits the
-    size and the number of pages.
+    Give its bytes, a URL the provider downloads it from, or a file
+    stored by the provider (``client.files.upload``), which is uploaded
+    once instead of with every request. Both providers read the text
+    and the pages as images; each limits the size and the number of
+    pages.
 
     Attributes:
         type: Always ``"document"``.
         data: The document, sent inline (base64).
         url: Where the provider downloads it from.
+        file: A document stored by the provider, sent by its id; the
+            provider keeps its name.
         media_type: Always ``"application/pdf"``.
         filename: The document's name, OpenAI's ``filename`` and
             Anthropic's ``title``; only with ``data``.
 
     Example:
         >>> DocumentPart(data=pdf, filename="report.pdf")
+        >>> DocumentPart(file=stored.ref)
     """
 
     type: Literal["document"] = "document"
@@ -232,7 +278,7 @@ class DocumentPart(_SourcePart):
             The part.
 
         Raises:
-            ValueError: A ``filename`` with a URL.
+            ValueError: A ``filename`` with a URL or a file.
         """
         if self.filename is not MISSING and self.data is MISSING:
             message = "filename goes with data only"

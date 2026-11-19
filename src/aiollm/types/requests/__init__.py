@@ -11,6 +11,7 @@ from aiollm.types.requests.content import (
     DocumentPart,
     ImageMediaType,
     ImagePart,
+    ProviderFile,
     TextPart,
 )
 from aiollm.types.requests.generation import (
@@ -28,12 +29,16 @@ from aiollm.types.requests.generation import (
     Turn,
     tool,
 )
+from aiollm.types.requests.upload import (
+    FileUpload,
+)
 
 __all__ = [
     "BaseRequest",
     "ContentPart",
     "DocumentMediaType",
     "DocumentPart",
+    "FileUpload",
     "ForcedTool",
     "GenerationRequest",
     "ImageMediaType",
@@ -43,6 +48,7 @@ __all__ = [
     "JSONValue",
     "NativeOutput",
     "NoProviderOptions",
+    "ProviderFile",
     "TextPart",
     "Tool",
     "ToolCall",

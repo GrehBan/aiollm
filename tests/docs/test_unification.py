@@ -19,17 +19,26 @@ from pydantic import BaseModel, ValidationError
 import aiollm
 from aiollm.enums import IncompleteReason, Provider, Role, ToolChoice
 from aiollm.exceptions import RequestValidationError
-from aiollm.providers.anthropic.adapters import AnthropicGenerationAdapter
+from aiollm.providers.anthropic import AnthropicClient
+from aiollm.providers.anthropic.adapters import (
+    AnthropicFilesAdapter,
+    AnthropicGenerationAdapter,
+)
 from aiollm.providers.anthropic.types import Message
 from aiollm.providers.openai import OpenAIClient
-from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
+from aiollm.providers.openai.adapters import (
+    OpenAIFilesAdapter,
+    OpenAIGenerationAdapter,
+)
 from aiollm.providers.openai.client import session_factory
 from aiollm.providers.openai.types import Response
 from aiollm.types.requests import (
     DocumentPart,
+    FileUpload,
     ForcedTool,
     GenerationRequest,
     ImagePart,
+    ProviderFile,
     TextPart,
     Tool,
     ToolCallTurn,
@@ -40,8 +49,10 @@ from aiollm.types.responses import (
     CompletedEvent,
     GenerationEvent,
     GenerationResponse,
+    StoredFile,
     TokenUsage,
 )
+from aiollm.types.files import BytesFile
 from aiollm.types.requests import ToolCall
 from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 from tests.providers import test_anthropic_messages as anthropic
@@ -69,6 +80,9 @@ TOOL = Tool(name="f", parameters={"type": "object"})
 CALL = ToolCall(id="call_1", name="f", arguments="{}")
 
 TURNS = [Turn.user("Hi"), Turn.assistant("Hello")]
+
+OPENAI_FILE = ProviderFile(provider=Provider.OPENAI, id="file-abc123")
+"""A file OpenAI stores."""
 
 PARTS = (TextPart, ImagePart, DocumentPart)
 """The parts of a turn, which the input conversion converts."""
@@ -101,6 +115,9 @@ def documented(owner: str) -> set[str]:
         ToolCall,
         CompletedEvent,
         *PARTS,
+        FileUpload,
+        ProviderFile,
+        StoredFile,
     ],
     ids=lambda model: model.__name__,
 )
@@ -320,6 +337,22 @@ SYNC_CASES: dict[str, Callable[[], object]] = {
         role=Role.ASSISTANT, content=[TextPart(text="Hi")]
     ),
     "image-without-media-type": lambda: ImagePart(data=b"\x89PNG"),
+    "part-with-two-sources": lambda: DocumentPart(
+        data=b"%PDF", file=OPENAI_FILE
+    ),
+    "part-with-another-providers-file": anthropic_method(
+        input=[Turn.user([DocumentPart(file=OPENAI_FILE)])]
+    ),
+    "openai-expiry-out-of-range": lambda: (
+        OpenAIFilesAdapter().to_upload_method(
+            FileUpload(file=BytesFile(b"%PDF"), expires_in_seconds=60)
+        )
+    ),
+    "anthropic-expiry-out-of-range": lambda: (
+        AnthropicFilesAdapter().to_upload_method(
+            FileUpload(file=BytesFile(b"%PDF"), expires_in_seconds=60)
+        )
+    ),
 }
 """Cases raised without sending anything."""
 
@@ -359,7 +392,14 @@ async def image_of_unknown_format(_: Recorder) -> None:
     await ImagePart.load(DOCUMENT)
 
 
+async def another_providers_file(_: Recorder) -> None:
+    """Delete an OpenAI file through Anthropic's client."""
+    async with AnthropicClient(TEST_TOKEN) as client:
+        await client.files.delete(OPENAI_FILE)
+
+
 ASYNC_CASES: dict[str, Callable[[Recorder], Awaitable[None]]] = {
+    "files-call-with-another-providers-file": another_providers_file,
     "image-of-unknown-format": image_of_unknown_format,
     "openai-failed-response": failed_response,
     "stream-without-completion": stream_without_completion,

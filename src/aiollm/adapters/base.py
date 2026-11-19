@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, ClassVar
 
 from aiollm.enums import Provider
 from aiollm.methods.protocols import IAPIMethod, IStreamMethod
 from aiollm.types.requests.base import BaseRequest
+from aiollm.types.requests.upload import FileUpload
 from aiollm.types.responses.base import BaseResponse
 from aiollm.types.responses.events import BaseResponseEvent
+from aiollm.types.responses.files import StoredFile
 
 
 class BaseConversion[SourceT, TargetT](ABC):
@@ -197,3 +199,104 @@ class BaseCompositeAdapter[
     A subclass usually builds both methods from one private helper, since
     a provider's buffered and streamed requests mostly differ by one flag.
     """
+
+
+class BaseFilesAdapter[RawFileT, RawPageT](_ProviderAdapter):
+    """Base class of adapters of a provider's Files API.
+
+    A subclass builds the provider's five methods and converts its file
+    type and list page; it adds ``with_options`` for its upload options
+    (``IFilesAdapter``).
+
+    Example:
+        >>> class ExampleFilesAdapter(BaseFilesAdapter[File, FilePage]):
+        ...     provider = Provider.GENERIC
+        ...
+        ...     def to_retrieve_method(self, file_id):
+        ...         return RetrieveFile(file_id=file_id)
+    """
+
+    @abstractmethod
+    def to_upload_method(self, request: FileUpload) -> IAPIMethod[RawFileT]:
+        """Build the method that stores a file.
+
+        Args:
+            request: The shared upload.
+
+        Returns:
+            The provider's upload method, ready to send.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_retrieve_method(self, file_id: str) -> IAPIMethod[RawFileT]:
+        """Build the method that reads a file's metadata.
+
+        Args:
+            file_id: The provider's id of the file.
+
+        Returns:
+            The provider's method, ready to send.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_list_method(self, cursor: str | None) -> IAPIMethod[RawPageT]:
+        """Build the method that reads one page of the stored files.
+
+        Args:
+            cursor: Where the page starts; ``None`` for the first page.
+
+        Returns:
+            The provider's method, ready to send.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_page(self, raw: RawPageT) -> tuple[Sequence[RawFileT], str | None]:
+        """Take the files of a page and where the next one starts.
+
+        Args:
+            raw: The page the list method returned.
+
+        Returns:
+            The page's files and the cursor of the next page, ``None``
+            after the last one.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_delete_method(self, file_id: str) -> IAPIMethod[Any]:
+        """Build the method that deletes a file.
+
+        Args:
+            file_id: The provider's id of the file.
+
+        Returns:
+            The provider's method, ready to send.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_download_method(self, file_id: str) -> IStreamMethod[bytes]:
+        """Build the method that streams a file's content.
+
+        Args:
+            file_id: The provider's id of the file.
+
+        Returns:
+            The provider's stream method, ready to open.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def to_stored_file(self, raw: RawFileT) -> StoredFile[RawFileT]:
+        """Convert the provider's file into the shared metadata.
+
+        Args:
+            raw: The provider's file.
+
+        Returns:
+            The shared metadata, ``raw`` included.
+        """
+        raise NotImplementedError

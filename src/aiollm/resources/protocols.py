@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, Protocol, Self, Unpack, overload
 
@@ -10,6 +10,7 @@ from pydantic import MISSING
 
 from aiollm.adapters.protocols import ICompositeAdapter
 from aiollm.client.protocols import IClient
+from aiollm.methods.protocols import IAPIMethod, IStreamMethod
 from aiollm.response.stream import Stream
 from aiollm.session.protocols import CallOptions, ISession, Timeout
 from aiollm.types.requests.base import BaseRequest
@@ -21,16 +22,22 @@ from aiollm.types.responses.base import BaseResponse
 from aiollm.types.responses.events import BaseResponseEvent, GenerationEvent
 
 if TYPE_CHECKING:
-    from aiollm.enums import Effort, ToolChoice
+    from os import PathLike
+
+    from aiollm.enums import Effort, Provider, ToolChoice
     from aiollm.http.protocols import HeadersType
     from aiollm.resources.stream import GenerationStream
     from aiollm.session.retry.policy import RetryPolicy
+    from aiollm.types.files import BinaryStream, InputFile
+    from aiollm.types.requests.content import ProviderFile
     from aiollm.types.requests.generation import (
         ForcedTool,
         InputItem,
         JSONSchema,
         ToolType,
     )
+    from aiollm.types.requests.upload import FileUpload
+    from aiollm.types.responses.files import StoredFile
     from aiollm.types.responses.generation import GenerationResponse
 
 
@@ -290,6 +297,243 @@ class IGenerationClient[RawT = Any, RawItemT = Any](IClient, Protocol):
     @property
     def generation(self) -> IGenerationResource[RawT, RawItemT]:
         """Shared text generation over the provider's API."""
+        ...
+
+
+class IFilesAdapter[
+    RawFileT,
+    RawPageT,
+    OptionsT: Mapping[str, object] = NoProviderOptions,
+](Protocol):
+    """The adapter a ``FilesResource`` runs on.
+
+    It builds the provider's Files methods and converts what they
+    return; like every adapter, it sends nothing, holds no session and
+    no mutable state that outlives one method call. ``RawFileT`` is the
+    provider's file type, ``RawPageT`` one page of its list, and
+    ``OptionsT`` the ``TypedDict`` of its own upload options.
+    """
+
+    @property
+    def provider(self) -> Provider:
+        """The provider whose methods the adapter builds."""
+        ...
+
+    def with_options(self, options: OptionsT, /) -> Self:
+        """Return a copy that adds the options to every upload it builds.
+
+        Args:
+            options: The provider's own upload options of one call.
+
+        Returns:
+            A copy of the adapter; this one is left as it is.
+
+        Raises:
+            RequestValidationError: A key is not one of the provider's
+                options.
+        """
+        ...
+
+    def to_upload_method(self, request: FileUpload) -> IAPIMethod[RawFileT]:
+        """Build the method that stores a file.
+
+        Args:
+            request: The shared upload.
+
+        Returns:
+            The provider's upload method, ready to send.
+
+        Raises:
+            RequestValidationError: The provider cannot take the upload,
+                such as an expiry outside its range.
+        """
+        ...
+
+    def to_retrieve_method(self, file_id: str) -> IAPIMethod[RawFileT]:
+        """Build the method that reads a file's metadata.
+
+        Args:
+            file_id: The provider's id of the file.
+
+        Returns:
+            The provider's method, ready to send.
+        """
+        ...
+
+    def to_list_method(self, cursor: str | None) -> IAPIMethod[RawPageT]:
+        """Build the method that reads one page of the stored files.
+
+        Args:
+            cursor: Where the page starts, as ``to_page`` gave it;
+                ``None`` for the first page.
+
+        Returns:
+            The provider's method, ready to send.
+        """
+        ...
+
+    def to_page(self, raw: RawPageT) -> tuple[Sequence[RawFileT], str | None]:
+        """Take the files of a page and where the next one starts.
+
+        Args:
+            raw: The page the list method returned.
+
+        Returns:
+            The page's files and the cursor of the next page, ``None``
+            after the last one.
+        """
+        ...
+
+    def to_delete_method(self, file_id: str) -> IAPIMethod[Any]:
+        """Build the method that deletes a file.
+
+        Args:
+            file_id: The provider's id of the file.
+
+        Returns:
+            The provider's method, ready to send.
+        """
+        ...
+
+    def to_download_method(self, file_id: str) -> IStreamMethod[bytes]:
+        """Build the method that streams a file's content.
+
+        Args:
+            file_id: The provider's id of the file.
+
+        Returns:
+            The provider's stream method, ready to open.
+        """
+        ...
+
+    def to_stored_file(self, raw: RawFileT) -> StoredFile[RawFileT]:
+        """Convert the provider's file into the shared metadata.
+
+        Args:
+            raw: The provider's file.
+
+        Returns:
+            The shared metadata, ``raw`` included.
+        """
+        ...
+
+
+class IFilesResource[RawT](IResource, Protocol):
+    """Stores files with a provider; the same interface for every one.
+
+    A stored file is named by its ``ProviderFile`` (``StoredFile.ref``),
+    which a part takes as ``file=``; a ``ProviderFile`` of another
+    provider raises ``RequestValidationError`` before anything is sent.
+    Every method takes the options of the call (``headers``, ``timeout``,
+    ``retry_policy``) as ``send_request`` does.
+    """
+
+    async def upload(
+        self,
+        file: InputFile | bytes | PathLike[str] | BinaryStream,
+        /,
+        *,
+        expires_in_seconds: int | MISSING = MISSING,
+        **options: Unpack[CallOptions],
+    ) -> StoredFile[RawT]:
+        """Store a file with the provider.
+
+        Never retried, since a retry after a lost answer would store the
+        file twice.
+
+        Args:
+            file: The content, with the name the provider keeps.
+            expires_in_seconds: Seconds after which the provider deletes
+                the file; left out, it is kept until it is deleted.
+            **options: Options of the call, passed on to the session.
+
+        Returns:
+            The stored file.
+        """
+        ...
+
+    async def retrieve(
+        self,
+        file: ProviderFile,
+        /,
+        **options: Unpack[CallOptions],
+    ) -> StoredFile[RawT]:
+        """Read a stored file's metadata.
+
+        Args:
+            file: The file.
+            **options: Options of the call, passed on to the session.
+
+        Returns:
+            The stored file.
+        """
+        ...
+
+    def list(
+        self,
+        **options: Unpack[CallOptions],
+    ) -> AsyncIterator[StoredFile[RawT]]:
+        """Go through every stored file, a page at a time.
+
+        Args:
+            **options: Options of each page's call, passed on to the
+                session.
+
+        Returns:
+            The files, in the provider's order; the next page is asked
+            for when the last file of a page has been taken.
+        """
+        ...
+
+    async def delete(
+        self,
+        file: ProviderFile,
+        /,
+        **options: Unpack[CallOptions],
+    ) -> None:
+        """Delete a stored file.
+
+        Args:
+            file: The file.
+            **options: Options of the call, passed on to the session.
+        """
+        ...
+
+    def download(
+        self,
+        file: ProviderFile,
+        /,
+        **options: Unpack[CallOptions],
+    ) -> AbstractAsyncContextManager[Stream[bytes]]:
+        """Stream a stored file's content; use with ``async with``.
+
+        Args:
+            file: The file.
+            **options: Options of opening the stream, passed on to the
+                session.
+
+        Returns:
+            A context manager that yields the content in chunks
+            (``save(path)`` writes it to a file) and closes it on exit.
+        """
+        ...
+
+
+class IFilesClient[RawT = Any](IClient, Protocol):
+    """A client that stores files; every provider's client is one.
+
+    ``RawT`` is the provider's file type, ``Any`` by default for code
+    that works with any provider.
+
+    Example:
+        >>> async def store(client: IFilesClient, path: Path) -> ProviderFile:
+        ...     stored = await client.files.upload(path)
+        ...     return stored.ref
+    """
+
+    @property
+    def files(self) -> IFilesResource[RawT]:
+        """Files stored with the provider."""
         ...
 
 
