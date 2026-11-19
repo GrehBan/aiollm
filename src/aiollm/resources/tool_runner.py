@@ -177,41 +177,57 @@ def bind_callbacks(
     return callbacks
 
 
+type ToolErrorHandler = Callable[[Exception], object]
+"""Turns a failed callback's exception into the output the model reads."""
+
+
 @invoke
-async def _run_tool(call_id: str, callback: Callback) -> ToolResult:
+async def _run_tool(
+    call_id: str,
+    callback: Callback,
+    on_error: ToolErrorHandler | None,
+) -> ToolResult:
     """Run one bound callback and wrap its output as the call's result.
 
     Args:
         call_id: The tool call the result answers.
         callback: The bound callback.
+        on_error: Makes the output of a callback, or of serializing its
+            output, that failed with an ``Exception``; ``None`` lets the
+            failure through.
 
     Returns:
         The callback's output, serialized, under ``call_id``.
     """
-    return ToolResult(
-        call_id=call_id,
-        output=_serialize_tool_output(await callback()),
-    )
+    try:
+        output = _serialize_tool_output(await callback())
+    except Exception as exc:
+        if on_error is None:
+            raise
+        output = _serialize_tool_output(on_error(exc))
+    return ToolResult(call_id=call_id, output=output)
 
 
 def _invocations(
     calls: Mapping[str, Callback],
+    on_error: ToolErrorHandler | None,
 ) -> Iterator[CallbackInvocation[..., ToolResult]]:
     """Turn bound callbacks into invocations for the executor, in order.
 
     Args:
         calls: Bound callbacks keyed by tool call ID.
+        on_error: Makes the output of a failed callback, if given.
 
     Yields:
         One invocation per call, producing that call's ``ToolResult``.
     """
     for call_id, callback in calls.items():
-        yield _run_tool(call_id, callback)
+        yield _run_tool(call_id, callback, on_error)
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
-class _Limits:
-    """How the callbacks of one response are scheduled.
+class _RunOptions:
+    """How the callbacks of one response are run.
 
     Attributes:
         concurrency: Maximum number of callbacks executing at once.
@@ -219,11 +235,14 @@ class _Limits:
             the next callback waits for the consumer.
         in_order: Yield results in tool-call order; ``False`` yields
             each as soon as its callback finishes.
+        on_error: Makes the output of a failed callback, so the model
+            reads the failure; ``None`` raises it.
     """
 
     concurrency: int = 1
     buffer_size: int = 0
     in_order: bool = True
+    on_error: ToolErrorHandler | None = None
 
     def __post_init__(self) -> None:
         """Refuse limits the executor would refuse, before any request.
@@ -240,7 +259,7 @@ class _Limits:
 
 def _executor(
     calls: Mapping[str, Callback],
-    limits: _Limits,
+    run_options: _RunOptions,
 ) -> CallbackExecutor[ToolResult]:
     """Make the executor that runs the callbacks of one response.
 
@@ -248,18 +267,18 @@ def _executor(
 
     Args:
         calls: Bound callbacks keyed by tool call ID.
-        limits: How the callbacks are scheduled.
+        run_options: How the callbacks are run.
 
     Returns:
         The executor, not entered yet.
     """
     return CallbackExecutor(
-        _invocations(calls),
-        concurrency=limits.concurrency,
-        buffer_size=limits.buffer_size,
+        _invocations(calls, run_options.on_error),
+        concurrency=run_options.concurrency,
+        buffer_size=run_options.buffer_size,
         execution_policy=(
             ExecutionPolicy.SEQUENTIAL
-            if limits.in_order
+            if run_options.in_order
             else ExecutionPolicy.FIRST_COMPLETED
         ),
     )
@@ -287,6 +306,7 @@ class ToolRunnerIterator[RawT]:
         *,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
     ) -> None:
         """Initialize the iterator.
 
@@ -300,18 +320,22 @@ class ToolRunnerIterator[RawT]:
                 before the next callback waits for the consumer.
             in_order: Yield results in tool-call order; ``False`` yields
                 each as soon as its callback finishes.
+            on_error: Makes the output of a callback that failed with an
+                ``Exception``, so the model reads the failure; ``None``
+                raises it.
 
         Raises:
             ValueError: If ``concurrency`` is less than ``1`` or
                 ``buffer_size`` is negative.
         """
-        limits = _Limits(
+        run_options = _RunOptions(
             concurrency=concurrency,
             buffer_size=buffer_size,
             in_order=in_order,
+            on_error=on_error,
         )
         self.original = original
-        self._executor = _executor(calls, limits)
+        self._executor = _executor(calls, run_options)
 
     def __aiter__(self) -> Self:
         """Return this iterator.
@@ -403,6 +427,7 @@ class ToolStreamRunnerIterator[RawItemT]:
         *,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
     ) -> None:
         """Initialize the stream iterator.
 
@@ -417,15 +442,19 @@ class ToolStreamRunnerIterator[RawItemT]:
                 before the next callback waits for the consumer.
             in_order: Yield results in tool-call order; ``False`` yields
                 each as soon as its callback finishes.
+            on_error: Makes the output of a callback that failed with an
+                ``Exception``, so the model reads the failure; ``None``
+                raises it.
 
         Raises:
             ValueError: If ``concurrency`` is less than ``1`` or
                 ``buffer_size`` is negative.
         """
-        self._limits = _Limits(
+        self._run_options = _RunOptions(
             concurrency=concurrency,
             buffer_size=buffer_size,
             in_order=in_order,
+            on_error=on_error,
         )
         self.original = original
         self.tools = tools
@@ -518,7 +547,7 @@ class ToolStreamRunnerIterator[RawItemT]:
                 raise
 
             callbacks = bind_callbacks(completed.tool_calls, self.tools)
-            self._runner = _executor(callbacks, self._limits)
+            self._runner = _executor(callbacks, self._run_options)
             return None
         except BaseException as exc:
             self._closed = True
@@ -628,6 +657,7 @@ class ToolRunner[
         concurrency: int = 1,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         model: str,
         input: str | Sequence[InputItem],
         instructions: str | MISSING = MISSING,
@@ -651,6 +681,7 @@ class ToolRunner[
         concurrency: int = 1,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         provider_options: OptionsT | MISSING = MISSING,
         **options: Unpack[CallOptions],
     ) -> ToolRunnerIterator[RawT]: ...
@@ -663,6 +694,7 @@ class ToolRunner[
         concurrency: int = 1,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         headers: HeadersType | None = None,
         timeout: Timeout | None = None,
         retry_policy: RetryPolicy | None = None,
@@ -681,6 +713,12 @@ class ToolRunner[
                 takes one of the ``concurrency`` slots.
             in_order: Yield results in tool-call order (the default);
                 ``False`` yields each as soon as its callback finishes.
+            on_error: Called with the exception of a callback, or of
+                serializing its output, that failed with an
+                ``Exception``; what it returns is that call's output
+                (a string as is, anything else as JSON), so the model
+                reads the failure and the other callbacks go on.
+                ``None`` (the default) raises the failure instead.
             headers: Headers for this request only.
             timeout: Seconds for this request instead of the session's
                 limit; ``None`` to keep it.
@@ -706,8 +744,9 @@ class ToolRunner[
                 provided in the request, or the response references an
                 unknown tool.
             CallbackExceptionGroup: Raised while iterating: the failures
-                of callbacks or of serializing their output, after the
-                unfinished callbacks have been cancelled; a cancellation
+                of callbacks or of serializing their output (without
+                ``on_error``, or raised by it), after the unfinished
+                callbacks have been cancelled; a cancellation
                 inside a callback that the runner did not request is a
                 ``CallbackCancelledError`` among them.
             CancelledError: The consumer was cancelled, after unfinished
@@ -717,10 +756,11 @@ class ToolRunner[
                 one of the provider's options, or a value is invalid;
                 raised before anything is sent.
         """
-        limits = _Limits(
+        run_options = _RunOptions(
             concurrency=concurrency,
             buffer_size=buffer_size,
             in_order=in_order,
+            on_error=on_error,
         )
         request = make_request(request, fields)
         tools = grab_tools(request)
@@ -742,9 +782,10 @@ class ToolRunner[
         return ToolRunnerIterator[RawT](
             callbacks,
             response,
-            concurrency=limits.concurrency,
-            buffer_size=limits.buffer_size,
-            in_order=limits.in_order,
+            concurrency=run_options.concurrency,
+            buffer_size=run_options.buffer_size,
+            in_order=run_options.in_order,
+            on_error=run_options.on_error,
         )
 
     @overload
@@ -755,6 +796,7 @@ class ToolRunner[
         concurrency: int = 1,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         model: str,
         input: str | Sequence[InputItem],
         instructions: str | MISSING = MISSING,
@@ -778,6 +820,7 @@ class ToolRunner[
         concurrency: int = 1,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         provider_options: OptionsT | MISSING = MISSING,
         **options: Unpack[CallOptions],
     ) -> AbstractAsyncContextManager[ToolStreamRunnerIterator[RawItemT]]: ...
@@ -791,6 +834,7 @@ class ToolRunner[
         concurrency: int = 1,
         buffer_size: int = 0,
         in_order: bool = True,
+        on_error: ToolErrorHandler | None = None,
         headers: HeadersType | None = None,
         timeout: Timeout | None = None,
         retry_policy: RetryPolicy | None = None,
@@ -811,6 +855,12 @@ class ToolRunner[
                 takes one of the ``concurrency`` slots.
             in_order: Yield results in tool-call order (the default);
                 ``False`` yields each as soon as its callback finishes.
+            on_error: Called with the exception of a callback, or of
+                serializing its output, that failed with an
+                ``Exception``; what it returns is that call's output
+                (a string as is, anything else as JSON), so the model
+                reads the failure and the other callbacks go on.
+                ``None`` (the default) raises the failure instead.
             headers: Headers for this request only.
             timeout: Seconds for this request instead of the session's
                 limit; ``None`` to keep it.
@@ -836,8 +886,9 @@ class ToolRunner[
                 provided in the request, or a tool call references an
                 unknown tool.
             CallbackExceptionGroup: Raised while iterating: the failures
-                of callbacks or of serializing their output, after the
-                unfinished callbacks have been cancelled; a cancellation
+                of callbacks or of serializing their output (without
+                ``on_error``, or raised by it), after the unfinished
+                callbacks have been cancelled; a cancellation
                 inside a callback that the runner did not request is a
                 ``CallbackCancelledError`` among them.
             CancelledError: The consumer was cancelled, after unfinished
@@ -847,10 +898,11 @@ class ToolRunner[
                 one of the provider's options, or a value is invalid;
                 raised before anything is sent.
         """
-        limits = _Limits(
+        run_options = _RunOptions(
             concurrency=concurrency,
             buffer_size=buffer_size,
             in_order=in_order,
+            on_error=on_error,
         )
         request = make_request(request, fields)
         tools = grab_tools(request)
@@ -864,9 +916,10 @@ class ToolRunner[
         iterator = ToolStreamRunnerIterator[RawItemT](
             response,
             tools,
-            concurrency=limits.concurrency,
-            buffer_size=limits.buffer_size,
-            in_order=limits.in_order,
+            concurrency=run_options.concurrency,
+            buffer_size=run_options.buffer_size,
+            in_order=run_options.in_order,
+            on_error=run_options.on_error,
         )
         try:
             yield iterator

@@ -1375,3 +1375,138 @@ async def test_stream_yields_results_as_they_finish() -> None:
         ]
 
     assert results == ["call-2", "call-1"]
+
+
+def describe(error: Exception) -> str:
+    return f"Error: {error}"
+
+
+async def test_on_error_turns_a_failure_into_the_output() -> None:
+    @tool
+    def fail() -> str:
+        raise ValueError("no such city")
+
+    @tool
+    async def lookup() -> dict[str, int]:
+        return {"celsius": 15}
+
+    calls = [
+        ToolCall(id="call-1", name="fail", arguments="{}"),
+        ToolCall(id="call-2", name="lookup", arguments="{}"),
+    ]
+    request = GenerationRequest(
+        model="model-1",
+        input="Hi",
+        tools=[fail.tool, lookup.tool],
+    )
+    runner = make_runner(FakeGenerationResource(response_with_tools(calls)))
+
+    iterator = await runner.create(request, on_error=describe)
+    results = [result async for result in iterator]
+
+    assert results == [
+        ToolResult(call_id="call-1", output="Error: no such city"),
+        ToolResult(call_id="call-2", output='{"celsius": 15}'),
+    ]
+
+
+async def test_on_error_gets_serialization_failures_and_may_return_json() -> (
+    None
+):
+    seen: list[Exception] = []
+
+    def record(error: Exception) -> dict[str, str]:
+        seen.append(error)
+        return {"error": type(error).__name__}
+
+    async def unserializable() -> object:
+        return object()
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(unserializable, (), {})},
+        response_with_tools([]),
+        on_error=record,
+    )
+    results = [result.output async for result in runner]
+
+    assert results == ['{"error": "TypeError"}']
+    assert [type(error) for error in seen] == [TypeError]
+
+
+async def test_a_failing_on_error_is_the_failure() -> None:
+    original = RuntimeError("callback failed")
+    handler_error = LookupError("handler failed")
+
+    async def fail() -> str:
+        raise original
+
+    def broken_handler(error: Exception) -> str:
+        raise handler_error
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(fail, (), {})},
+        response_with_tools([]),
+        on_error=broken_handler,
+    )
+
+    with pytest.raises(CallbackExceptionGroup) as caught:
+        async for _ in runner:
+            pytest.fail("a failed handler produced a result")
+
+    assert caught.value.exceptions == (handler_error,)
+    assert handler_error.__context__ is original
+
+
+async def test_on_error_does_not_receive_an_unrequested_cancellation() -> None:
+    seen: list[Exception] = []
+
+    def record(error: Exception) -> str:
+        seen.append(error)
+        return "recorded"
+
+    async def cancel_itself() -> str:
+        task = asyncio.current_task()
+        assert task is not None
+        task.cancel()
+        await asyncio.sleep(0)
+        return "unreachable"
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(cancel_itself, (), {})},
+        response_with_tools([]),
+        on_error=record,
+    )
+
+    with pytest.raises(CallbackExceptionGroup) as caught:
+        async for _ in runner:
+            pytest.fail("a cancelled callback produced a result")
+
+    assert isinstance(caught.value.exceptions[0], CallbackCancelledError)
+    assert seen == []
+
+
+async def test_stream_passes_on_error_to_its_callbacks() -> None:
+    @tool
+    def fail() -> str:
+        raise ValueError("no such city")
+
+    calls = [ToolCall(id="call-1", name="fail", arguments="{}")]
+    completed = CompletedEvent(
+        provider=Provider.GENERIC,
+        model="model-1",
+        tool_calls=calls,
+        raw={},
+    )
+    request = GenerationRequest(model="model-1", input="Hi", tools=[fail.tool])
+    resource = FakeGenerationResource(response_with_tools(calls), [completed])
+
+    async with make_runner(resource).stream(
+        request, on_error=describe
+    ) as events:
+        results = [
+            event async for event in events if isinstance(event, ToolResult)
+        ]
+
+    assert results == [
+        ToolResult(call_id="call-1", output="Error: no such city")
+    ]

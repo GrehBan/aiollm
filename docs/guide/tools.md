@@ -157,6 +157,15 @@ only a cancellation of the consumer itself propagates as `CancelledError`,
 after unfinished callbacks have been cancelled and awaited. Callbacks already
 started may have performed side effects before cancellation.
 
+To let the model read a failure instead, pass `on_error`: it is called with
+the `Exception` of a callback, or of serializing its output, and what it
+returns becomes that call's `ToolResult.output` (a string as is, anything else
+as JSON), while the other callbacks go on. For example,
+`on_error=lambda error: f"Error: {error}"` sends the exception's message; keep
+in mind that the message goes to the provider. An exception raised by
+`on_error` itself is the call's failure, and a cancellation is never passed to
+it.
+
 If buffered results are only partially consumed, use the iterator as an async
 context manager (`async with calls:`) or call `await calls.aclose()` to cancel
 and wait for unfinished callbacks; closing raises the failures recorded so far,
