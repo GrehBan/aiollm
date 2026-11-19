@@ -138,17 +138,29 @@ run at once; it defaults to `1`, preserving sequential execution. Results
 are yielded in tool-call order even when callbacks finish in a different
 order, and each result keeps its matching `call_id`.
 
-When a callback or JSON serialization fails, the runner cancels unfinished
-callbacks and propagates the failure as soon as it observes it. If multiple
-failures are observed together, the first one in tool-call order is
-propagated. A callback or consumer `CancelledError` is treated as cancellation:
-unfinished callbacks are cancelled and awaited before it propagates. Callbacks
-already started may have performed side effects before cancellation. If
-buffered results are only partially consumed, call `await calls.aclose()` to
-cancel and wait for unfinished callbacks. The streaming context closes its
-callbacks when the context exits. Synchronous callbacks run inline and do not
-overlap; use async callbacks or explicitly offload blocking work to benefit
-from concurrency.
+The runner executes callbacks with
+[aiopulse](https://github.com/GrehBan/aiopulse)'s `CallbackExecutor`.
+When a callback or the JSON serialization of its output fails, the runner
+cancels unfinished callbacks, waits for them, and raises a
+`CallbackExceptionGroup` (`from aiollm import CallbackExceptionGroup`) from
+the iteration, even for a single failure. It holds every failure observed
+before the callbacks stopped, so `except* ValueError:` handles them by type,
+and its `failures` give each one's `index`, the position of its tool call. A
+callback that ends with a cancellation the runner did not request, for example
+by awaiting a cancelled task, is one of those failures, as a
+`CallbackCancelledError` whose `__cause__` is the original `CancelledError`;
+only a cancellation of the consumer itself propagates as `CancelledError`,
+after unfinished callbacks have been cancelled and awaited. Callbacks already
+started may have performed side effects before cancellation.
+
+If buffered results are only partially consumed, use the iterator as an async
+context manager (`async with calls:`) or call `await calls.aclose()` to cancel
+and wait for unfinished callbacks; closing raises the failures recorded so far,
+unless the block is already raising an exception, which then takes precedence.
+An iteration still waiting in another task ends with `StopAsyncIteration`. The
+streaming context closes its callbacks the same way when it exits.
+Synchronous callbacks run inline and do not overlap; use async callbacks or
+explicitly offload blocking work to benefit from concurrency.
 
 The response is available as `.original`. An incomplete response has no
 results and does not invoke callbacks; inspect `incomplete_reason` before
@@ -184,7 +196,8 @@ async def ask_with_runner(
         if response.incomplete_reason is not None or not response.tool_calls:
             return response
         conversation.append(response.to_turn())
-        conversation.extend([result async for result in calls])
+        async with calls:
+            conversation.extend([result async for result in calls])
 ```
 
 `tool_runner.stream()` is an async context manager. It yields the generation's

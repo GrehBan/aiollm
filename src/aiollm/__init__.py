@@ -11,6 +11,12 @@ from __future__ import annotations
 
 import logging
 
+from aiopulse import (
+    CallbackCancelledError,
+    CallbackExceptionGroup,
+    CallbackFailure,
+)
+
 from aiollm.__meta__ import (
     __version__,
 )
@@ -193,6 +199,9 @@ __all__ = [
     "BillingError",
     "BodyFormat",
     "BytesFile",
+    "CallbackCancelledError",
+    "CallbackExceptionGroup",
+    "CallbackFailure",
     "ChunkedFile",
     "CompletedEvent",
     "ConflictError",
