@@ -16,18 +16,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The iterator returned by `tool_runner.create()` is an async context manager:
   `async with calls:` cancels and awaits unfinished callbacks when the block is
   left early, as `tool_runner.stream()` already did.
+- `tool_runner.create()` and `tool_runner.stream()` take `in_order` and
+  `buffer_size`. `in_order=False` yields each `ToolResult` as soon as its
+  callback finishes instead of in tool-call order. `buffer_size` lets that many
+  finished but unread results wait beyond `concurrency`, so a slow first
+  callback holds back the ones after it only once those places are full.
+  Further callbacks start while the consumer waits for a result, not between
+  its reads.
+- `tool_runner.create()` and `tool_runner.stream()` take `on_error`, which
+  turns the exception of a failed callback (or of serializing its output) into
+  that call's `ToolResult.output`, so the model reads the failure and the other
+  callbacks go on, for example `on_error=lambda error: f"Error: {error}"`.
+  Without it a failure is raised as before.
 
 ### Changed
 
 - **Breaking:** the tool runner executes callbacks with aiopulse's
-  `CallbackExecutor`, a new dependency (pinned to a commit until aiopulse is
-  on PyPI). A callback failure is raised as a `CallbackExceptionGroup` holding
-  every failure observed before the callbacks stopped, even when there is only
-  one, instead of the first failure alone; handle it with `except*` or read
-  its `failures`. `CallbackExceptionGroup`, `CallbackFailure` and
-  `CallbackCancelledError` are re-exported from `aiollm`. An iteration of
-  `tool_runner.create()` still waiting in another task when the iterator is
-  closed ends with `StopAsyncIteration` instead of `CancelledError`.
+  `CallbackExecutor`, a new dependency: `aiopulse-py` from PyPI (`>=0.0.5`),
+  imported as `aiopulse`. A callback failure is raised as a
+  `CallbackExceptionGroup` holding every failure observed before the callbacks
+  stopped, even when there is only one, instead of the first failure alone;
+  handle it with `except*` or read its `failures`. `CallbackExceptionGroup`,
+  `CallbackFailure` and `CallbackCancelledError` are re-exported from
+  `aiollm`. An iteration of `tool_runner.create()` still waiting in another
+  task when the iterator is closed ends with `StopAsyncIteration` instead of
+  `CancelledError`.
+- **Breaking:** the tool runner runs a synchronous callback in a worker thread
+  instead of in the event loop, so a blocking callback no longer stops the loop
+  and, with `concurrency` above `1`, synchronous callbacks run at the same
+  time. A callback that must stay in the loop's thread (one that uses an
+  `sqlite3` connection or other object bound to its thread, or that is not
+  thread-safe) should be an `async def`. A cancelled synchronous callback runs
+  to its end, since a thread cannot be stopped; a failure it then ends with is
+  reported through the event loop's exception handler.
 
 ### Fixed
 
