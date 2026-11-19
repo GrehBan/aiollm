@@ -140,7 +140,9 @@ order, and each result keeps its matching `call_id`; pass `in_order=False` to
 get each result as soon as its callback finishes. A finished result that has
 not been read yet keeps its slot, so with tool-call order a slow first
 callback can hold back the next ones: `buffer_size` (default `0`) is how many
-such results may wait beyond `concurrency` while further callbacks start.
+such results may wait beyond `concurrency` while further callbacks start; once
+they are all taken, the next callback waits again. Callbacks are started only
+while the consumer waits for a result, not between its reads.
 
 The runner executes callbacks with
 [aiopulse](https://github.com/GrehBan/aiopulse)'s `CallbackExecutor`.

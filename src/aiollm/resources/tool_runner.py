@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import inspect
 import json
 from collections.abc import (
@@ -129,12 +130,66 @@ class Callback:
         if _is_async(self.callback):
             result = self.callback(*self.args, **self.kwargs)
         else:
-            result = await ThreadWork().run(
-                self.callback, *self.args, **self.kwargs
+            result = await ThreadWork(dispose=_dispose).run(
+                _call_in_thread, self.callback, self.args, self.kwargs
             )
+            if isinstance(result, _Raised):
+                raise result.error
         if inspect.isawaitable(result):
             return await result
         return result
+
+
+@dataclass(slots=True, frozen=True)
+class _Raised:
+    """An exception a callback raised that must cross the thread as is.
+
+    Attributes:
+        error: The exception.
+    """
+
+    error: Exception
+
+
+def _call_in_thread(
+    callback: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    """Call a synchronous callback in its worker thread.
+
+    A ``concurrent.futures.CancelledError`` (a callback that read a
+    cancelled future) is returned in a ``_Raised``: asyncio would turn it
+    into ``asyncio.CancelledError`` on its way out of the thread, and the
+    callback's failure would then look like a cancellation.
+
+    Args:
+        callback: The callback.
+        args: Its positional arguments.
+        kwargs: Its keyword arguments.
+
+    Returns:
+        What the callback returned, or the ``_Raised`` error.
+    """
+    try:
+        return callback(*args, **kwargs)
+    except concurrent.futures.CancelledError as error:
+        return _Raised(error)
+
+
+def _dispose(result: object) -> None:
+    """Release what a synchronous callback returned after a cancel.
+
+    Args:
+        result: What the callback returned.
+
+    Raises:
+        Exception: The error a ``_Raised`` holds, to be reported.
+    """
+    if isinstance(result, _Raised):
+        raise result.error
+    if inspect.iscoroutine(result):
+        result.close()
 
 
 def _is_async(callback: Callable[..., Any]) -> bool:
@@ -564,7 +619,8 @@ class ToolStreamRunnerIterator[RawItemT]:
 
         Generation events are forwarded unchanged. Once the generation
         stream completes successfully, callback results are yielded in
-        the order of the corresponding tool calls.
+        the order of the corresponding tool calls, or as each callback
+        finishes when ``in_order`` is ``False``.
 
         Returns:
             The next generation event or tool result.

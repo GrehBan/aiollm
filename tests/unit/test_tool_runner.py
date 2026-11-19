@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import inspect
 import threading
-from collections.abc import AsyncGenerator, Coroutine, Sequence
+from collections.abc import AsyncGenerator, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
 
@@ -1246,23 +1248,30 @@ async def test_async_callables_run_in_the_event_loop() -> None:
     assert [result.output for result in results] == ["called", "awaited"]
 
 
-async def test_a_cancelled_sync_callback_reports_its_late_failure() -> None:
+async def abandon(
+    late: Callable[[], object],
+    settled: Callable[[list[dict[str, Any]]], bool] = bool,
+) -> list[dict[str, Any]]:
+    """Cancel the consumer of a sync callback, then let it end with ``late``.
+
+    Waits until ``settled`` holds for what the loop's exception handler
+    received, and returns that.
+    """
     loop = asyncio.get_running_loop()
     reported: list[dict[str, Any]] = []
     loop.set_exception_handler(lambda _, context: reported.append(context))
-    started = threading.Event()
+    started = asyncio.Event()
     release = threading.Event()
-    late_error = OSError("late failure")
 
-    def fail_late() -> str:
-        started.set()
-        assert release.wait(timeout=1)
-        raise late_error
+    def end_late() -> object:
+        loop.call_soon_threadsafe(started.set)
+        release.wait()
+        return late()
 
-    runner = iterate({"call-1": Callback(fail_late, (), {})})
+    runner = iterate({"call-1": Callback(end_late, (), {})})
     consumer = asyncio.create_task(anext(runner))
     try:
-        await asyncio.to_thread(started.wait, 1)
+        await asyncio.wait_for(started.wait(), timeout=5)
         consumer.cancel()
         with pytest.raises(asyncio.CancelledError):
             await consumer
@@ -1271,13 +1280,74 @@ async def test_a_cancelled_sync_callback_reports_its_late_failure() -> None:
         release.set()
         await runner.aclose()
 
-    for _ in range(100):
-        if reported:
-            break
-        await asyncio.sleep(0.01)
-    loop.set_exception_handler(None)
+    try:
+        for _ in range(500):
+            if settled(reported):
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        loop.set_exception_handler(None)
+    return reported
+
+
+async def test_a_cancelled_sync_callback_reports_its_late_failure() -> None:
+    late_error = OSError("late failure")
+
+    def fail() -> object:
+        raise late_error
+
+    reported = await abandon(fail)
 
     assert [context["exception"] for context in reported] == [late_error]
+
+
+async def test_a_late_future_cancellation_is_reported_as_it_was() -> None:
+    late_error = concurrent.futures.CancelledError()
+
+    def fail() -> object:
+        raise late_error
+
+    reported = await abandon(fail)
+
+    assert [context["exception"] for context in reported] == [late_error]
+
+
+async def test_a_late_coroutine_result_is_closed_unawaited() -> None:
+    async def never_awaited() -> str:
+        return "unreachable"
+
+    coroutines: list[Coroutine[Any, Any, str]] = []
+
+    def make() -> object:
+        coroutine = never_awaited()
+        coroutines.append(coroutine)
+        return coroutine
+
+    def closed(_: list[dict[str, Any]]) -> bool:
+        return bool(coroutines) and (
+            inspect.getcoroutinestate(coroutines[0]) == inspect.CORO_CLOSED
+        )
+
+    reported = await abandon(make, closed)
+
+    assert reported == []
+    assert inspect.getcoroutinestate(coroutines[0]) == inspect.CORO_CLOSED
+
+
+async def test_a_cancelled_future_read_by_a_callback_is_its_failure() -> None:
+    def read_cancelled() -> str:
+        future: concurrent.futures.Future[str] = concurrent.futures.Future()
+        future.cancel()
+        return future.result()
+
+    runner = ToolRunnerIterator(
+        {"call-1": Callback(read_cancelled, (), {})},
+        response_with_tools([]),
+        on_error=lambda error: type(error).__module__,
+    )
+    results = [result.output async for result in runner]
+
+    assert results == ["concurrent.futures._base"]
 
 
 @pytest.mark.parametrize("buffer_size", [0, 1])
