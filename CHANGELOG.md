@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.12.0] - 2026-11-19
+
+### Added
+
+- The iterator returned by `tool_runner.create()` is an async context manager:
+  `async with calls:` cancels and awaits unfinished callbacks when the block is
+  left early, as `tool_runner.stream()` already did.
+
+### Changed
+
+- **Breaking:** the tool runner executes callbacks with aiopulse's
+  `CallbackExecutor`, a new dependency (pinned to a commit until aiopulse is
+  on PyPI). A callback failure is raised as a `CallbackExceptionGroup` holding
+  every failure observed before the callbacks stopped, even when there is only
+  one, instead of the first failure alone; handle it with `except*` or read
+  its `failures`. `CallbackExceptionGroup`, `CallbackFailure` and
+  `CallbackCancelledError` are re-exported from `aiollm`. An iteration of
+  `tool_runner.create()` still waiting in another task when the iterator is
+  closed ends with `StopAsyncIteration` instead of `CancelledError`.
+
+### Fixed
+
+- A tool callback that ended with a cancellation the runner did not request,
+  such as awaiting a cancelled task, reached the consumer as `CancelledError`,
+  which looks like a cancellation of the consumer and is swallowed by its
+  `TaskGroup`. It is now a `CallbackCancelledError` failure in the raised
+  `CallbackExceptionGroup`, with the original cancellation as its `__cause__`.
+
 ## [0.11.2] - 2026-11-17
 
 ### Added
@@ -1174,7 +1202,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/GrehBan/aiollm/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/GrehBan/aiollm/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/GrehBan/aiollm/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/GrehBan/aiollm/compare/v0.10.0...v0.11.0
