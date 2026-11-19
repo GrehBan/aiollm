@@ -41,7 +41,6 @@ from pydantic_core import to_jsonable_python
 from aiollm.adapters import ICompositeAdapter
 from aiollm.enums import Effort, ToolChoice
 from aiollm.methods import BaseAPIMethod, BaseStreamMethod
-from aiollm.providers.anthropic import methods as anthropic_methods
 from aiollm.providers.anthropic.adapters import AnthropicGenerationAdapter
 from aiollm.providers.anthropic.adapters.conversions import message_text
 from aiollm.providers.anthropic.methods import CreateMessage, StreamMessage
@@ -49,7 +48,6 @@ from aiollm.providers.anthropic.types import Message, MessageStreamEvent
 from aiollm.providers.anthropic.types.options import (
     AnthropicGenerationOptions,
 )
-from aiollm.providers.openai import methods as openai_methods
 from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
 from aiollm.providers.openai.adapters.conversions import output_text
 from aiollm.providers.openai.methods import CreateResponse, StreamResponse
@@ -257,33 +255,18 @@ class ProviderTypes:
             endpoint the provider's types serve.
         models: The modules of the response and event models.
         params: The modules of the request parameter models.
-        methods: Every method of the provider; their parameter mixins
-            are checked with the methods.
+        covered: The methods whose fields
+            ``test_method_fields_match_the_request_schema`` checks; their
+            parameter mixins are left to that test. Every other parameter
+            model, such as ``ListFilesParams``, is checked here against
+            the ``$defs`` entry of its name.
     """
 
     name: str
     snapshots: tuple[str, ...]
     models: tuple[ModuleType, ...]
     params: tuple[ModuleType, ...]
-    methods: tuple[type[BaseModel], ...]
-
-
-def methods_of(package: ModuleType) -> tuple[type[BaseModel], ...]:
-    """Collect the method classes a provider's ``methods`` exports.
-
-    Args:
-        package: Such as ``aiollm.providers.openai.methods``.
-
-    Returns:
-        The exported classes that are methods.
-    """
-    exported = (getattr(package, name) for name in package.__all__)
-    return tuple(
-        item
-        for item in exported
-        if inspect.isclass(item)
-        and issubclass(item, (BaseAPIMethod, BaseStreamMethod))
-    )
+    covered: tuple[type[BaseModel], ...]
 
 
 PROVIDER_TYPES = [
@@ -294,14 +277,14 @@ PROVIDER_TYPES = [
             snapshots=("openai/responses", "openai/files"),
             models=OPENAI.models,
             params=OPENAI.params,
-            methods=methods_of(openai_methods),
+            covered=(OPENAI.create, OPENAI.stream),
         ),
         ProviderTypes(
             name="anthropic",
             snapshots=("anthropic/messages", "anthropic/files"),
             models=ANTHROPIC.models,
             params=ANTHROPIC.params,
-            methods=methods_of(anthropic_methods),
+            covered=(ANTHROPIC.create, ANTHROPIC.stream),
         ),
     )
 ]
@@ -962,10 +945,10 @@ def provider_models(
     Yields:
         Every ``BaseAPIType`` subclass defined in the endpoint's model
         modules, except the ``BaseUnknown`` ones, which keep whatever an
-        unknown ``type`` sends, and the methods' own parameter mixins,
-        whose fields the method checks cover.
+        unknown ``type`` sends, and the parameter mixins of the methods
+        ``test_method_fields_match_the_request_schema`` checks.
     """
-    mixins = {base for method in types.methods for base in method.__mro__}
+    mixins = {base for method in types.covered for base in method.__mro__}
     for module in types.params if params else types.models:
         for _, model in inspect.getmembers(module, inspect.isclass):
             if (

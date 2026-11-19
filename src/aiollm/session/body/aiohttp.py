@@ -393,8 +393,8 @@ class AiohttpBodyBuilder:
             multipart: Whether the form is multipart.
 
         Raises:
-            TypeError: If an item is a list, which a repeated field would
-                flatten.
+            TypeError: If an item is a list or a dict, whose boundaries
+                a repeated field would lose.
             ValueError: If an item is ``None``.
         """
         for item in items:
@@ -403,6 +403,11 @@ class AiohttpBodyBuilder:
                 raise ValueError(message)
             if isinstance(item, (list, tuple)):
                 message = f"Form field {key!r} cannot send nested lists"
+                raise TypeError(message)
+            if isinstance(item, Mapping):
+                # [{"a": 1}, {"b": 2}] and [{"a": 1, "b": 2}] would both
+                # become key[a]=1&key[b]=2.
+                message = f"Form field {key!r} cannot send a dict in a list"
                 raise TypeError(message)
 
             self._add_field(form, key, item, formatter, uploads, multipart)

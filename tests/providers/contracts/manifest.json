@@ -194,7 +194,7 @@
    ],
    "openapi": {
     "file": "anthropic-files.openapi.json",
-    "sha256": "593759619fd2228369b16cc11cab749b043282c2dfffc09d16f4c13c26e7e635",
+    "sha256": "43ae03117a6e3fd31785cb6eb776460bf033bc59340d763cd0e7644e77072159",
     "openapi": "3.1.0",
     "version": "2026-10-21",
     "sources": [

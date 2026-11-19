@@ -144,7 +144,7 @@ Before encoding, the values are normalized:
 - **Text streams** are refused: uploads are bytes, so open the file in binary mode. A method given one raises `ValidationError` when it is created.
 - **Circular references** and nesting deeper than 253 levels raise `ValueError`, instead of an encoder error: orjson refuses deeper data.
 
-In `FORM` and `MULTIPART` bodies a list sends its field once per item, a dict sends one field per key with the key in brackets (`expires_after={"anchor": "created_at"}` becomes `expires_after[anchor]=created_at`, nested dicts likewise, as OpenAI's upload reads them) and a boolean is sent as `"true"` or `"false"`. A form has no `null`, so a field that is `None`, or `None` in a list or a dict, raises `ValueError` (leave the field `MISSING` to leave it out). A list inside a list, or inside a dict, raises `TypeError`: a repeated field would flatten the first, and bracket encodings disagree on the second.
+In `FORM` and `MULTIPART` bodies a list sends its field once per item, a dict sends one field per key with the key in brackets (`expires_after={"anchor": "created_at"}` becomes `expires_after[anchor]=created_at`, nested dicts likewise, as OpenAI's upload reads them) and a boolean is sent as `"true"` or `"false"`. A form has no `null`, so a field that is `None`, or `None` in a list or a dict, raises `ValueError` (leave the field `MISSING` to leave it out). A list inside a list, a dict inside a list, or a list inside a dict raises `TypeError`: a repeated field would lose the boundaries of the first two, and bracket encodings disagree on the third.
 
 ## Dates, times and durations
 

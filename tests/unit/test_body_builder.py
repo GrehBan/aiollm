@@ -443,8 +443,9 @@ def test_forms_do_not_use_the_json_encoder() -> None:
     [
         (["a", None], ValueError, "'tags' cannot send None"),
         ([["a", "b"], ["c"]], TypeError, "'tags' cannot send nested lists"),
+        ([{"a": 1}, {"b": 2}], TypeError, "'tags' cannot send a dict in a"),
     ],
-    ids=["none", "nested"],
+    ids=["none", "nested", "dicts"],
 )
 @pytest.mark.parametrize(
     "body_format", [BodyFormat.FORM, BodyFormat.MULTIPART]
@@ -456,7 +457,8 @@ def test_form_lists_it_cannot_express_are_rejected(
     error: type[Exception],
     match: str,
 ) -> None:
-    # A repeated field has no null, and nested lists would be flattened.
+    # A repeated field has no null, and nested lists or dicts would lose
+    # their boundaries.
     with pytest.raises(error, match=match):
         build(builder, {"tags": value}, body_format, ISO)
 

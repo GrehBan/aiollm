@@ -724,6 +724,30 @@ def operations_of(
     return {name: found[name] for name in names}
 
 
+def operation_parameters(
+    operation: dict[str, Any], item: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """List an operation's parameters, its path item's included.
+
+    An operation's parameter replaces the path item's one of the same
+    ``name`` and ``in``, as OpenAPI defines.
+
+    Args:
+        operation: The operation.
+        item: Its path item.
+
+    Returns:
+        The parameters, path item's first.
+    """
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for parameter in [
+        *item.get("parameters", []),
+        *operation.get("parameters", []),
+    ]:
+        merged[parameter["name"], parameter["in"]] = parameter
+    return list(merged.values())
+
+
 def parameters_schema(
     spec: dict[str, Any],
     operation: dict[str, Any],
@@ -748,10 +772,7 @@ def parameters_schema(
     required: list[str] = []
     roots: set[str] = set()
 
-    for parameter in [
-        *item.get("parameters", []),
-        *operation.get("parameters", []),
-    ]:
+    for parameter in operation_parameters(operation, item):
         if parameter.get("in") not in ("path", "query"):
             continue
         name = parameter["name"]
@@ -790,10 +811,7 @@ def operation_shape(
         media types of its body and of its ``200`` response, and the
         component the JSON response refers to.
     """
-    parameters = [
-        *item.get("parameters", []),
-        *operation.get("parameters", []),
-    ]
+    parameters = operation_parameters(operation, item)
     body = operation.get("requestBody", {}).get("content", {})
     result = operation["responses"]["200"].get("content", {})
     roots = [

@@ -9,6 +9,7 @@ Each provider has the same five methods, `CreateFile`, `ListFiles`, `RetrieveFil
 ```python title="openai_files.py"
 from pathlib import Path
 
+from aiollm.providers.openai import OpenAIClient
 from aiollm.providers.openai.adapters import output_text
 from aiollm.providers.openai.methods import (
     CreateFile,
