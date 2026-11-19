@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import errno
+import functools
 import inspect
 import io
 import logging
@@ -120,7 +122,7 @@ class ThreadWork:
                 cancelled, since nobody receives it any more; what it
                 raises is reported like a failed call.
         """
-        self._running: asyncio.Task[Any] | None = None
+        self._running: asyncio.Future[Any] | None = None
         self._finishing: asyncio.Task[None] | None = None
         self._dispose = dispose
 
@@ -156,19 +158,27 @@ class ThreadWork:
         if self.busy:
             raise RuntimeError("ThreadWork runs one call at a time")
 
-        task = asyncio.create_task(asyncio.to_thread(func, *args, **kwargs))
-        self._running = task
+        # A future, not a task (asyncio.to_thread): asyncio.run cancels
+        # every task left when its coroutine returns, which would end
+        # this one while its thread runs on and drop how that ended. A
+        # future is left alone, and the loop, which waits for its worker
+        # threads before closing, still reports a late failure.
+        context = contextvars.copy_context()
+        call = asyncio.get_running_loop().run_in_executor(
+            None, functools.partial(context.run, func, *args, **kwargs)
+        )
+        self._running = call
 
-        # Waiting does not cancel the task, as shield would not either;
+        # Waiting does not cancel the call, as shield would not either;
         # unlike shield (3.14+), it reports nothing itself, so a failure
         # after a cancel is reported once, by _abandoned.
         try:
-            await asyncio.wait({task})
+            await asyncio.wait({call})
         except asyncio.CancelledError:
-            task.add_done_callback(self._abandoned)
+            call.add_done_callback(self._abandoned)
             raise
 
-        return task.result()
+        return call.result()
 
     async def wait_idle(self) -> None:
         """Wait until no call or cleanup runs; a failure does not raise."""
@@ -232,7 +242,7 @@ class ThreadWork:
 
     @staticmethod
     async def _finish_after(
-        running: asyncio.Task[Any],
+        running: asyncio.Future[Any],
         cleanup: Callable[[], object],
         *,
         blocking: bool,
@@ -251,22 +261,22 @@ class ThreadWork:
         else:
             cleanup()
 
-    def _abandoned(self, task: asyncio.Task[Any]) -> None:
+    def _abandoned(self, call: asyncio.Future[Any]) -> None:
         """Report how a call whose caller was cancelled ended, if it failed.
 
         A result it returned goes to ``dispose``, if given.
 
         Args:
-            task: The call.
+            call: The call.
         """
-        if task.cancelled():
+        if call.cancelled():
             return
 
-        exc = task.exception()
+        exc = call.exception()
 
         if exc is None and self._dispose is not None:
             try:
-                self._dispose(task.result())
+                self._dispose(call.result())
             except Exception as error:  # noqa: BLE001
                 exc = error
 

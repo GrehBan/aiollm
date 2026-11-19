@@ -79,6 +79,15 @@ overrides the docstring. `@tool(description=..., strict=...)` provides the
 same options and exposes the cached definition as `.tool`. Neither executes
 the function while defining it.
 
+Any callable works. A `functools.partial` takes the name and docstring of the
+function it wraps, and its bound arguments are left out of the schema, so
+`functools.partial(get_weather, api_key)` keeps the key away from the model.
+An object with a `__call__` method takes the name of its class, the class
+docstring (or else the method's), and the method's parameters without `self`.
+`*args` becomes an array property and `**kwargs` an object property, each named
+after its parameter; `parse_arguments()` puts them back in their places. The
+schema has `additionalProperties: false`, since any other key is refused.
+
 ## Manual buffered workflow
 
 The first example sends a request with a callable tool. When the model returns
@@ -116,8 +125,11 @@ before sending.
 
 With `strict=True`, the generated schema must have
 `additionalProperties: false` and list every property in `required`;
-otherwise the providers return 400. Without `strict=True`, neither provider
-requests strict schema adherence.
+otherwise the providers return 400. A parameter with a default, or `*args`,
+is not required, so a strict callable has neither. A callable with
+`**kwargs` cannot be strict at all, since its arguments are an object of any
+keys: `Tool.from_callable()` and `@tool` raise `TypeError`. Without
+`strict=True`, neither provider requests strict schema adherence.
 
 ## Automatic callback runner
 
@@ -129,8 +141,9 @@ results, but it does not send the next model request; append the response turn
 and results, then call generation again as in this example.
 
 `tool_runner.create()` waits for the full response and returns an async
-iterator. The callback execution starts when the iterator is consumed, not
-when `create()` returns. It binds and validates every call before running the
+iterator. The callback execution starts when the iterator is entered
+(`async with calls:`) or first read, whichever comes first, not when
+`create()` returns. It binds and validates every call before running the
 first callback; an unknown tool, invalid arguments or missing callback
 therefore fails without running any callback. Set `concurrency` on
 `tool_runner.create()` or `tool_runner.stream()` to limit how many callbacks
@@ -141,8 +154,12 @@ get each result as soon as its callback finishes. A finished result that has
 not been read yet keeps its slot, so with tool-call order a slow first
 callback can hold back the next ones: `buffer_size` (default `0`) is how many
 such results may wait beyond `concurrency` while further callbacks start; once
-they are all taken, the next callback waits again. Callbacks are started only
-while the consumer waits for a result, not between its reads.
+they are all taken, the next callback waits again. Entering the iterator or
+reading it for the first time starts the first callbacks, up to
+`concurrency`; after that, further callbacks are started only while the
+consumer waits for a result, not between its reads. A streamed call starts its
+callbacks once the stream has ended with its `CompletedEvent` and the consumer
+reads past it.
 
 The runner executes callbacks with
 [aiopulse](https://github.com/GrehBan/aiopulse)'s `CallbackExecutor`.
@@ -182,7 +199,8 @@ an object bound to the thread that made it (an `sqlite3` connection, for
 example) must be used from an `async def` callback instead. A thread cannot be
 stopped: a cancelled synchronous callback runs to its end after the runner has
 closed, and a failure it then ends with is reported through the event loop's
-exception handler.
+exception handler, even after the coroutine given to `asyncio.run` has
+returned, since the loop waits for its worker threads before it closes.
 
 The response is available as `.original`. An incomplete response has no
 results and does not invoke callbacks; inspect `incomplete_reason` before

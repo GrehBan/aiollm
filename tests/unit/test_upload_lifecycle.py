@@ -9,9 +9,11 @@ no exception, a cancellation least of all, is lost on the way.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import gc
 import io
 import threading
+import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -482,28 +484,55 @@ async def test_a_cancelled_open_that_fails_is_reported(
     ]
 
 
-async def test_an_open_cancelled_with_its_thread_reports_nothing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+async def test_a_call_its_executor_cancels_reports_nothing(
     reported: Reported,
 ) -> None:
-    # As at the end of asyncio.run, which cancels every task left.
-    slow_open = SlowOpen()
-    patch_open(monkeypatch, slow_open)
-    task = asyncio.create_task(open_file(tmp_path / "a.bin", "wb"))
-    await slow_open.gate.reached()
-    (opening,) = asyncio.all_tasks() - {asyncio.current_task(), task}
+    # A call still queued when its executor is shut down with
+    # cancel_futures never runs, so nothing failed.
+    gate = Gate()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    asyncio.get_running_loop().set_default_executor(executor)
+    blocker = asyncio.get_running_loop().run_in_executor(None, gate.wait)
+    await until(gate.entered.is_set)  # gate.reached needs a free worker
+    work = ThreadWork()
+    task = asyncio.create_task(work.run(fail))
+    await asyncio.sleep(0)
 
     await cancelled(task)
-    opening.cancel()
-    await asyncio.wait({opening})
-    slow_open.gate.released.set()
+    executor.shutdown(wait=False, cancel_futures=True)
+    await work.wait_idle()
+    gate.released.set()
+    await blocker
+    await asyncio.sleep(0)
 
-    assert opening.cancelled()
-    await until(lambda: slow_open.opened)
-    slow_open.opened[0].close()
-    await until(lambda: asyncio.all_tasks() == {asyncio.current_task()})
     assert reported.contexts == []
+
+
+def test_a_late_failure_is_reported_after_asyncio_run_returns() -> None:
+    # asyncio.run cancels every task left when its coroutine returns; the
+    # call is not one, so the loop still reports how it ended while it
+    # waits for its worker threads.
+    collector = Reported()
+    may_fail = threading.Event()
+
+    def read() -> bytes:
+        assert may_fail.wait(WAIT)
+        time.sleep(0.05)  # past the coroutine's return
+        raise OSError("read failed")
+
+    async def main() -> None:
+        asyncio.get_running_loop().set_exception_handler(collector)
+        task = asyncio.create_task(ThreadWork().run(read))
+        await asyncio.sleep(0)
+        await cancelled(task)
+        may_fail.set()
+
+    asyncio.run(main())
+
+    assert collector.messages == [
+        "ThreadWork: A call whose caller was cancelled failed"
+    ]
+    assert str(collector.contexts[0]["exception"]) == "read failed"
 
 
 # PathFile
