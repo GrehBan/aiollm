@@ -62,7 +62,7 @@ src/aiollm/
     └── openai/         OpenAIClient, the Responses and Files APIs: methods/, types/, adapters/
 ```
 
-The packages are layers, listed from the bottom up; a module imports only from the layers below it. Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/` (every provider against shared scenarios and the upstream schemas), `tests/typing/` (static checks of the public API) and `tests/docs/` (the examples of these pages).
+The packages are layers, listed from the bottom up; a module imports only from the layers below it. The core never imports a provider, its infrastructure never imports the shared generation and files layer, and a provider takes from the core only the names of its extension API (`tests/unit/extension_api.json`, see [Extending](https://aiollm-org.github.io/aiollm/guide/extending/)). Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/` (every provider against shared scenarios and the upstream schemas), `tests/typing/` (static checks of the public API) and `tests/docs/` (the examples of these pages).
 
 ## Making changes in code
 

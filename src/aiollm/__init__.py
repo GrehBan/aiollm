@@ -3,8 +3,8 @@
 The names most clients need are re-exported here; everything else is
 imported from its layer package (``aiollm.http``, ``aiollm.methods``, ...).
 Transport code, such as ``aiollm.session.aiohttp``, and provider
-packages, such as ``aiollm.providers.openai``, are imported on their own,
-so importing ``aiollm`` does not import a transport.
+packages are imported on their own, so importing ``aiollm`` does not
+import a transport.
 """
 
 from __future__ import annotations

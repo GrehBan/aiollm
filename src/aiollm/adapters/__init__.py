@@ -16,6 +16,13 @@ from aiollm.adapters.protocols import (
     IStreamAdapter,
 )
 from aiollm.adapters.stop import Stop
+from aiollm.adapters.validation import (
+    check_conversation,
+    check_files,
+    checked_options,
+    merge_options,
+    request_errors,
+)
 
 __all__ = [
     "BaseAdapter",
@@ -28,4 +35,9 @@ __all__ = [
     "IConversion",
     "IStreamAdapter",
     "Stop",
+    "check_conversation",
+    "check_files",
+    "checked_options",
+    "merge_options",
+    "request_errors",
 ]

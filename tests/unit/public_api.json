@@ -109,7 +109,12 @@
     "ICompositeAdapter",
     "IConversion",
     "IStreamAdapter",
-    "Stop"
+    "Stop",
+    "check_conversation",
+    "check_files",
+    "checked_options",
+    "merge_options",
+    "request_errors"
   ],
   "aiollm.client": [
     "BaseClient",

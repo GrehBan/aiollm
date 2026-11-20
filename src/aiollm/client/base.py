@@ -49,7 +49,7 @@ class BaseClient[SessionT: ISession]:
         session: The session that sends the requests.
 
     Example:
-        >>> async with OpenAIClient("sk-...") as client:
+        >>> async with ExampleClient("sk-...") as client:
         ...     models = await client.send_request(ListModels())
     """
 
@@ -176,7 +176,7 @@ class BaseProviderClient(BaseClient[ISession]):
         session_factory: Builds the session from a token; its error
             resolver is the provider's.
         api_key_env: Environment variable read without a token or a
-            session, such as ``OPENAI_API_KEY``.
+            session, such as ``EXAMPLE_API_KEY``.
         auth_headers: Headers the provider takes the key in, such as
             ``Authorization``.
 

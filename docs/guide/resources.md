@@ -23,8 +23,7 @@ from aiollm import (
     Provider,
     TextDeltaEvent,
 )
-from aiollm.adapters import BaseCompositeAdapter
-from aiollm.adapters.validation import checked_options
+from aiollm.adapters import BaseCompositeAdapter, checked_options
 from aiollm.resources import GenerationResource
 from aiollm.session import ISession
 
