@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time. An upload is never retried, since `POST /files` is not idempotent;
   listing returns one page per call; `DownloadFile` streams the content
   (`Stream.save(path)`). See the new
-  [Provider files](https://grehban.github.io/aiollm/guide/files/) guide.
+  [Provider files](https://aiollm-org.github.io/aiollm/guide/files/) guide.
 - `client.files` on `OpenAIClient` and `AnthropicClient`: the same `upload`,
   `retrieve`, `list`, `delete` and `download` for every provider, in shared
   types. An upload returns a `StoredFile` (`ref`, `filename`, `size`,
@@ -224,7 +224,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets the shared calls. Every adapter refuses a conversation out of order (a
   call without its result, a result without its call, text between them) before
   sending, and Anthropic's adapter calls whose arguments are not a JSON object.
-- The guide has a [Tools](https://grehban.github.io/aiollm/guide/tools/) page:
+- The guide has a [Tools](https://aiollm-org.github.io/aiollm/guide/tools/) page:
   a tool loop that works with any provider, how calls, results and reasoning
   travel, and streaming; the shared generation, design and providers pages and
   `docs/unification.md` describe tools and the generated provider types.
@@ -1307,25 +1307,25 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.14.0...HEAD
-[0.14.0]: https://github.com/GrehBan/aiollm/compare/v0.13.0...v0.14.0
-[0.13.0]: https://github.com/GrehBan/aiollm/compare/v0.12.1...v0.13.0
-[0.12.1]: https://github.com/GrehBan/aiollm/compare/v0.12.0...v0.12.1
-[0.12.0]: https://github.com/GrehBan/aiollm/compare/v0.11.2...v0.12.0
-[0.11.2]: https://github.com/GrehBan/aiollm/compare/v0.11.1...v0.11.2
-[0.11.1]: https://github.com/GrehBan/aiollm/compare/v0.11.0...v0.11.1
-[0.11.0]: https://github.com/GrehBan/aiollm/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/GrehBan/aiollm/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/GrehBan/aiollm/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/GrehBan/aiollm/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/GrehBan/aiollm/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/GrehBan/aiollm/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/GrehBan/aiollm/compare/v0.4.4...v0.5.0
-[0.4.4]: https://github.com/GrehBan/aiollm/compare/v0.4.3...v0.4.4
-[0.4.3]: https://github.com/GrehBan/aiollm/compare/v0.4.2...v0.4.3
-[0.4.2]: https://github.com/GrehBan/aiollm/compare/v0.4.1...v0.4.2
-[0.4.1]: https://github.com/GrehBan/aiollm/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/GrehBan/aiollm/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/GrehBan/aiollm/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/GrehBan/aiollm/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/GrehBan/aiollm/compare/2b58dfc...v0.1.0
+[Unreleased]: https://github.com/aiollm-org/aiollm/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/aiollm-org/aiollm/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/aiollm-org/aiollm/compare/v0.12.1...v0.13.0
+[0.12.1]: https://github.com/aiollm-org/aiollm/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/aiollm-org/aiollm/compare/v0.11.2...v0.12.0
+[0.11.2]: https://github.com/aiollm-org/aiollm/compare/v0.11.1...v0.11.2
+[0.11.1]: https://github.com/aiollm-org/aiollm/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/aiollm-org/aiollm/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/aiollm-org/aiollm/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/aiollm-org/aiollm/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/aiollm-org/aiollm/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/aiollm-org/aiollm/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/aiollm-org/aiollm/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/aiollm-org/aiollm/compare/v0.4.4...v0.5.0
+[0.4.4]: https://github.com/aiollm-org/aiollm/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/aiollm-org/aiollm/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/aiollm-org/aiollm/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/aiollm-org/aiollm/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/aiollm-org/aiollm/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/aiollm-org/aiollm/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/aiollm-org/aiollm/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/aiollm-org/aiollm/compare/2b58dfc...v0.1.0
