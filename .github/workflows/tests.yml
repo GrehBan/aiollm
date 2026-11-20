@@ -29,14 +29,17 @@ jobs:
       - run: uv run ruff format --check src tests
       - run: uv run mypy src
       - run: uv run pyright
-      - run: uv run pytest --mypy -m mypy tests/typing
+      - run: >-
+          uv run pytest --mypy -m mypy tests/typing
+          tests/providers/openai/typing tests/providers/anthropic/typing
       - run: uv run rumdl check README.md CHANGELOG.md CONTRIBUTING.md docs
       - run: uv run mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
       # The provider types are what the pinned generator makes of the
       # pinned specifications: regenerating them changes nothing.
-      - run: uv run python scripts/generate_provider_types.py
+      - run: uv run python scripts/openai/generate_types.py
+      - run: uv run python scripts/anthropic/generate_types.py
       - run: git add --intent-to-add . && git diff --exit-code
 
   test-matrix:

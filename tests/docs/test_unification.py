@@ -58,8 +58,11 @@ from aiollm.types.files import BytesFile
 from aiollm.types.requests import ToolCall
 from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
 from aiollm.testing.aiohttp import Recorder
-from tests.providers import test_anthropic_messages as anthropic
-from tests.providers import test_openai_responses as openai
+from tests.docs.payloads import (
+    ANTHROPIC_MESSAGE,
+    OPENAI_RESPONSE,
+    OPENAI_STREAM,
+)
 
 DOCUMENT = Path(__file__).parents[2] / "docs" / "unification.md"
 TEXT = DOCUMENT.read_text("utf-8")
@@ -289,13 +292,13 @@ SYNC_CASES: dict[str, Callable[[], object]] = {
     ),
     "openai-unfinished-response": lambda: (
         OpenAIGenerationAdapter().to_response(
-            Response.model_validate(openai.RESPONSE | {"status": "cancelled"}),
+            Response.model_validate(OPENAI_RESPONSE | {"status": "cancelled"}),
             REQUEST,
         )
     ),
     "anthropic-message-without-stop-reason": lambda: (
         AnthropicGenerationAdapter().to_response(
-            Message.model_validate(anthropic.MESSAGE | {"stop_reason": None}),
+            Message.model_validate(ANTHROPIC_MESSAGE | {"stop_reason": None}),
             REQUEST,
         )
     ),
@@ -362,7 +365,7 @@ SYNC_CASES: dict[str, Callable[[], object]] = {
 
 async def failed_response(recorder: Recorder) -> None:
     """Create a response that OpenAI reports as failed."""
-    failed = openai.RESPONSE | {
+    failed = OPENAI_RESPONSE | {
         "status": "failed",
         "error": {"code": "server_error", "message": "Boom"},
     }
@@ -377,7 +380,7 @@ async def stream_without_completion(recorder: Recorder) -> None:
         Reply(
             chunks=[
                 f"data: {json.dumps(event)}\n\n".encode()
-                for event in openai.STREAM[:-1]
+                for event in OPENAI_STREAM[:-1]
             ],
             content_type="text/event-stream",
         )

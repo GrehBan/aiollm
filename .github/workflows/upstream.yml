@@ -1,8 +1,9 @@
 name: upstream
 
-# Every Monday, compare the pinned schema sources with upstream
-# (scripts/refresh_upstream.py). A moved pin becomes one pull request on
-# the branch upstream/refresh, opened or updated with UPSTREAM_PR_TOKEN
+# Every Monday, compare the pinned schema sources with upstream, one job
+# per provider (scripts/<provider>/refresh_upstream.py), as each
+# provider's own repository will. A moved pin becomes one pull request on
+# the branch upstream/<provider>, opened or updated with UPSTREAM_PR_TOKEN
 # (a fine-grained token: Contents and Pull requests, read and write), so
 # the pull request runs CI like any other. Its body lists the public names
 # the new types add or remove. Once someone has pushed a commit to the open
@@ -26,8 +27,12 @@ concurrency:
 
 jobs:
   refresh:
-    name: refresh
+    name: refresh (${{ matrix.provider }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [openai, anthropic]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,7 +41,9 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
       - run: uv sync --all-groups --locked
       - id: check
-        run: uv run python scripts/refresh_upstream.py --out "$RUNNER_TEMP/upstream"
+        run: >-
+          uv run python scripts/${{ matrix.provider }}/refresh_upstream.py
+          --out "$RUNNER_TEMP/upstream"
         env:
           GH_TOKEN: ${{ github.token }}
       - id: tests
@@ -49,10 +56,11 @@ jobs:
           GH_TOKEN: ${{ secrets.UPSTREAM_PR_TOKEN }}
           TESTS: ${{ steps.tests.outcome }}
           BODY: ${{ runner.temp }}/upstream/pull-request.md
+          PROVIDER: ${{ matrix.provider }}
         run: |
-          branch=upstream/refresh
+          branch="upstream/$PROVIDER"
           bot="41898282+github-actions[bot]@users.noreply.github.com"
-          title="Follow the upstream schema sources"
+          title="Follow the upstream schema sources of $PROVIDER"
           git config user.name "github-actions[bot]"
           git config user.email "$bot"
           open=false
@@ -89,7 +97,7 @@ jobs:
               --body-file "$BODY" "${draft[@]}"
           fi
       - name: open or update the issue
-        if: steps.check.outputs.pages == 'true'
+        if: matrix.provider == 'anthropic' && steps.check.outputs.pages == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           BODY: ${{ runner.temp }}/upstream/issue.md

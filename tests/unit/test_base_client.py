@@ -9,7 +9,7 @@ from __future__ import annotations
 import types
 import warnings
 from types import TracebackType
-from typing import Any
+from typing import Any, Final
 from unittest import mock
 
 import pytest
@@ -22,19 +22,12 @@ from aiollm.client.validators import (
     check_same_provider,
     provider_of,
 )
+from aiollm.enums import Provider
 from aiollm.http.auth import APIKeyAuth, BearerAuth
 from aiollm.http.exceptions.resolver import BaseErrorResolver
 from aiollm.http.exceptions.status import ServiceUnavailableError
 from aiollm.http.headers import AUTHORIZATION
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
-from aiollm.providers.anthropic.adapters import AnthropicGenerationAdapter
-from aiollm.providers.anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
-from aiollm.providers.anthropic.resolver import AnthropicErrorResolver
-from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
-from aiollm.providers.openai.api import OPENAI_API
-from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
-from aiollm.providers.openai.client import OpenAIClient
-from aiollm.providers.openai.resolver import OpenAIErrorResolver
 from aiollm.resources.generation import GenerationResource
 from aiollm.response.buffered import BufferedResponse
 from aiollm.session.aiohttp import AiohttpSession
@@ -47,20 +40,37 @@ from aiollm.testing import (
     LocalAPI,
     make_method,
 )
+from aiollm.testing.contract.clients import AnotherErrorResolver
+from aiollm.testing.echo import (
+    ECHO_API,
+    PROVIDER,
+    EchoClient,
+    EchoErrorResolver,
+    EchoGenerationAdapter,
+)
 from aiollm.types.requests import GenerationRequest
 from aiollm.types.responses import GenerationResponse
+
+ANOTHER: Final = Provider("another")
+"""A provider other than echo."""
+
+
+class AnotherGenerationAdapter(EchoGenerationAdapter):
+    """Echo's generation adapter, as another provider would have one."""
+
+    provider = ANOTHER
 
 
 def factory(resolver: BaseErrorResolver) -> SessionFactory[Any, Any, ...]:
     return SessionFactory(
         AiohttpSession,
         auth_factory=BearerAuth,
-        api=OPENAI_API,
+        api=ECHO_API,
         error_resolver=resolver,
     )
 
 
-OPENAI_FACTORY = factory(OpenAIErrorResolver())
+ECHO_FACTORY = factory(EchoErrorResolver())
 
 
 class ModelsAdapter(
@@ -68,7 +78,7 @@ class ModelsAdapter(
 ):
     """A second adapter of the client, as a ``models`` resource would add."""
 
-    provider = OPENAI_PROVIDER
+    provider = PROVIDER
 
     def __init__(self, *, page_size: int = 20) -> None:
         self.page_size = page_size
@@ -84,10 +94,10 @@ class ModelsAdapter(
         raise NotImplementedError
 
 
-class AnthropicModelsAdapter(ModelsAdapter):
+class AnotherModelsAdapter(ModelsAdapter):
     """The same adapter, of another provider."""
 
-    provider = ANTHROPIC_PROVIDER
+    provider = ANOTHER
 
 
 class ModelsResource:
@@ -103,7 +113,7 @@ def bind_models(adapter_type: type[ModelsAdapter] = ModelsAdapter) -> Any:
     return bind_resource(ModelsResource, adapter_type)
 
 
-def bind_generation(adapter_type: Any = OpenAIGenerationAdapter) -> Any:
+def bind_generation(adapter_type: Any = EchoGenerationAdapter) -> Any:
     """Bind the generation resource to an adapter class."""
     return bind_resource(GenerationResource, adapter_type)
 
@@ -111,8 +121,8 @@ def bind_generation(adapter_type: Any = OpenAIGenerationAdapter) -> Any:
 def declare(**parts: Any) -> type[BaseProviderClient]:
     """Declare a provider client with the given parts; ``None`` drops one."""
     namespace: dict[str, Any] = {
-        "provider": OPENAI_PROVIDER,
-        "session_factory": OPENAI_FACTORY,
+        "provider": PROVIDER,
+        "session_factory": ECHO_FACTORY,
         "api_key_env": "EXAMPLE_API_KEY",
         "auth_headers": frozenset({AUTHORIZATION}),
         "generation": bind_generation(),
@@ -130,7 +140,7 @@ def declare(**parts: Any) -> type[BaseProviderClient]:
 def test_parts_of_one_provider_are_accepted() -> None:
     client: Any = declare()(TEST_TOKEN)
 
-    assert client.provider == OPENAI_PROVIDER
+    assert client.provider == PROVIDER
     assert isinstance(client.session, AiohttpSession)
     assert isinstance(client.generation, GenerationResource)
     assert client.generation.session is client.session
@@ -143,28 +153,28 @@ def test_parts_of_one_provider_are_accepted() -> None:
     ("parts", "listed"),
     [
         (
-            {"provider": ANTHROPIC_PROVIDER},
-            "client=anthropic, error_resolver=openai, "
-            "generation adapter OpenAIGenerationAdapter=openai, "
-            "models adapter ModelsAdapter=openai",
+            {"provider": ANOTHER},
+            "client=another, error_resolver=echo, "
+            "generation adapter EchoGenerationAdapter=echo, "
+            "models adapter ModelsAdapter=echo",
         ),
         (
-            {"session_factory": factory(AnthropicErrorResolver())},
-            "client=openai, error_resolver=anthropic, "
-            "generation adapter OpenAIGenerationAdapter=openai, "
-            "models adapter ModelsAdapter=openai",
+            {"session_factory": factory(AnotherErrorResolver())},
+            "client=echo, error_resolver=another, "
+            "generation adapter EchoGenerationAdapter=echo, "
+            "models adapter ModelsAdapter=echo",
         ),
         (
-            {"generation": bind_generation(AnthropicGenerationAdapter)},
-            "client=openai, error_resolver=openai, "
-            "generation adapter AnthropicGenerationAdapter=anthropic, "
-            "models adapter ModelsAdapter=openai",
+            {"generation": bind_generation(AnotherGenerationAdapter)},
+            "client=echo, error_resolver=echo, "
+            "generation adapter AnotherGenerationAdapter=another, "
+            "models adapter ModelsAdapter=echo",
         ),
         (
-            {"models": bind_models(AnthropicModelsAdapter)},
-            "client=openai, error_resolver=openai, "
-            "generation adapter OpenAIGenerationAdapter=openai, "
-            "models adapter AnthropicModelsAdapter=anthropic",
+            {"models": bind_models(AnotherModelsAdapter)},
+            "client=echo, error_resolver=echo, "
+            "generation adapter EchoGenerationAdapter=echo, "
+            "models adapter AnotherModelsAdapter=another",
         ),
     ],
     ids=["client", "resolver", "first-adapter", "second-adapter"],
@@ -204,10 +214,10 @@ def test_adapters_of_one_class_on_two_resources_are_both_checked() -> None:
     # Keyed by attribute name, neither drops out of the check.
     with pytest.raises(
         TypeError,
-        match="models adapter ModelsAdapter=openai, "
-        "spare adapter AnthropicModelsAdapter=anthropic",
+        match="models adapter ModelsAdapter=echo, "
+        "spare adapter AnotherModelsAdapter=another",
     ):
-        declare(spare=bind_models(AnthropicModelsAdapter))
+        declare(spare=bind_models(AnotherModelsAdapter))
 
 
 def test_an_adapter_without_provider_fails_at_definition() -> None:
@@ -224,7 +234,7 @@ def test_a_resolver_without_provider_fails_at_definition() -> None:
     class Bare:
         """A resolver that names no provider."""
 
-    session_factory: Any = factory(OpenAIErrorResolver())
+    session_factory: Any = factory(EchoErrorResolver())
     session_factory.error_resolver = Bare()
 
     with pytest.raises(TypeError, match="error resolver .* no provider"):
@@ -268,7 +278,7 @@ def test_adapters_are_built_before_the_session() -> None:
 
 @pytest.mark.parametrize(
     "built",
-    [OpenAIGenerationAdapter, AnthropicModelsAdapter],
+    [EchoGenerationAdapter, AnotherModelsAdapter],
     ids=["another-class", "subclass-of-another-provider"],
 )
 def test_a_factory_of_another_adapter_is_refused(built: type[Any]) -> None:
@@ -329,11 +339,11 @@ def test_on_the_class_a_resource_is_its_binding() -> None:
 
 
 def test_check_same_provider_accepts_one_provider() -> None:
-    check_same_provider(a=OPENAI_PROVIDER, b=OPENAI_PROVIDER)
+    check_same_provider(a=PROVIDER, b=PROVIDER)
 
 
 def test_provider_of_names_the_source() -> None:
-    assert provider_of(OpenAIGenerationAdapter, "adapter") == OPENAI_PROVIDER
+    assert provider_of(EchoGenerationAdapter, "adapter") == PROVIDER
 
     with pytest.raises(TypeError, match="The adapter 1 declares no provider"):
         provider_of(1, "adapter")
@@ -359,13 +369,13 @@ def test_warnings_name_the_client_and_what_it_takes(api: LocalAPI) -> None:
     )
 
     with pytest.warns(SessionMismatchWarning) as caught:
-        OpenAIClient(session=session)
+        EchoClient(session=session)
 
     messages = [str(warning.message) for warning in caught]
     assert messages == [
-        "OpenAIClient is using BaseErrorResolver. Consider using "
-        "OpenAIErrorResolver for provider-specific error handling.",
-        "OpenAIClient sends the key in X-Key, but openai takes it in "
+        "EchoClient is using BaseErrorResolver. Consider using "
+        "EchoErrorResolver for provider-specific error handling.",
+        "EchoClient sends the key in X-Key, but echo takes it in "
         "Authorization.",
     ]
     assert all(warning.filename == __file__ for warning in caught)
@@ -375,22 +385,22 @@ def test_warnings_name_the_client_and_what_it_takes(api: LocalAPI) -> None:
 def test_another_providers_resolver_is_warned_about(api: LocalAPI) -> None:
     with pytest.warns(
         SessionMismatchWarning,
-        match="is using AnthropicErrorResolver. Consider using "
-        "OpenAIErrorResolver",
+        match="is using AnotherErrorResolver. Consider using "
+        "EchoErrorResolver",
     ):
-        OpenAIClient(session=session_with(api, AnthropicErrorResolver()))
+        EchoClient(session=session_with(api, AnotherErrorResolver()))
 
 
 def test_a_subclass_of_the_providers_resolver_is_accepted(
     api: LocalAPI,
 ) -> None:
-    class QuotaAware(OpenAIErrorResolver):
+    class QuotaAware(EchoErrorResolver):
         """A customized resolver, as README suggests."""
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         session = session_with(api, QuotaAware())
-        client = OpenAIClient(session=session)
+        client = EchoClient(session=session)
 
     assert client.session is session
 
@@ -400,7 +410,7 @@ def test_the_warning_is_turned_off_by_its_category(api: LocalAPI) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         warnings.filterwarnings("ignore", category=SessionMismatchWarning)
-        OpenAIClient(session=session_with(api, BaseErrorResolver()))
+        EchoClient(session=session_with(api, BaseErrorResolver()))
 
 
 class NoProvider(BaseAdapter[GenerationRequest, str, GenerationResponse[str]]):

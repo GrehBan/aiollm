@@ -92,7 +92,7 @@ testing = [
 
 [dependency-groups]
 # The generator of the provider types, at the commit they were made with;
-# scripts/generate_provider_types.py runs it (CONTRIBUTING.md).
+# scripts/<provider>/generate_types.py runs it (CONTRIBUTING.md).
 codegen = [
     "aiollm-codegen",
 ]
@@ -111,8 +111,9 @@ docs = [
     "rumdl>=0.3.2",
 ]
 # The provider SDKs whose types are the source of a wire-contract
-# snapshot (tests/providers/contracts/update.py): Anthropic publishes no
-# OpenAPI file. A new version changes the snapshot and this pin together.
+# snapshot (tests/providers/anthropic/contracts/update.py): Anthropic
+# publishes no OpenAPI file. A new version changes the snapshot and this
+# pin together.
 upstream = [
     "anthropic==2.12.0",
 ]

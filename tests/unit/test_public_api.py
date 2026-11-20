@@ -17,16 +17,6 @@ PACKAGES = [
     "aiollm.http",
     "aiollm.http.exceptions",
     "aiollm.methods",
-    "aiollm.providers.anthropic",
-    "aiollm.providers.anthropic.adapters",
-    "aiollm.providers.anthropic.methods",
-    "aiollm.providers.anthropic.methods.params",
-    "aiollm.providers.anthropic.types",
-    "aiollm.providers.openai",
-    "aiollm.providers.openai.adapters",
-    "aiollm.providers.openai.methods",
-    "aiollm.providers.openai.methods.params",
-    "aiollm.providers.openai.types",
     "aiollm.resources",
     "aiollm.response",
     "aiollm.response.parse",
@@ -53,7 +43,8 @@ def test_all_names_exist_and_are_sorted(name: str) -> None:
 
 
 SNAPSHOT = Path(__file__).with_name("public_api.json")
-"""The public names of every package, as the last release left them."""
+"""The public names of every package of the core, as the last release
+left them; each provider keeps its own beside its tests."""
 
 
 def test_the_public_api_matches_its_snapshot() -> None:

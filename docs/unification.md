@@ -188,7 +188,7 @@ Every case below is raised before the request is sent (requests) or before the s
 
 ## Provider options
 
-Not shared, but reachable through `client.generation`: `create(..., provider_options={...})` and `stream(...)` send a provider's own fields with that call, as `client.files.upload(..., provider_options={...})` does for an upload. Each key is a field of the provider's method with its type, and none is a field the shared request fills, which `tests/providers/test_provider_options.py` checks.
+Not shared, but reachable through `client.generation`: `create(..., provider_options={...})` and `stream(...)` send a provider's own fields with that call, as `client.files.upload(..., provider_options={...})` does for an upload. Each key is a field of the provider's method with its type, and none is a field the shared request fills, which each provider's `test_options.py` checks.
 
 | Provider | Options type | Keys |
 |---|---|---|

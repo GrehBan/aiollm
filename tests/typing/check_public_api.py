@@ -1,7 +1,9 @@
 # pyright: reportUnnecessaryTypeIgnoreComment=true
-"""Static checks of the public API.
+"""Static checks of the public API of the core.
 
-Never run: mypy (through ``pytest --mypy``) and pyright check it. Every
+The client of a provider here is the echo provider's, built from the
+extension API alone; each provider checks its own types beside its
+tests. Never run: mypy (through ``pytest --mypy``) and pyright check it. Every
 ``# type: ignore[...]`` marks a line that must stay a type error; mypy's
 ``warn_unused_ignores`` and pyright's ``reportUnnecessaryTypeIgnoreComment``
 fail the check if that error disappears.
@@ -26,7 +28,6 @@ from aiollm import (
     GenerationStream,
     Headers,
     IGenerationClient,
-    IncompleteReason,
     Provider,
     ResponseFormat,
     RetryPolicy,
@@ -40,40 +41,11 @@ from aiollm import (
 from aiollm.adapters import (
     BaseAdapter,
     BaseCompositeAdapter,
-    IConversion,
 )
-from aiollm.adapters import Stop as GenerationStop
 from aiollm.adapters.validation import checked_options
 from aiollm.client import IClient
 from aiollm.http import IAPI, BearerAuth
 from aiollm.methods import IAPIMethod, IStreamMethod
-from aiollm.providers.anthropic import AnthropicClient
-from aiollm.providers.anthropic.adapters import AnthropicGenerationAdapter
-from aiollm.providers.anthropic.methods import (
-    CreateMessage,
-    StreamMessage,
-)
-from aiollm.providers.anthropic.methods.params import UserMessageParam
-from aiollm.providers.anthropic.types import (
-    FileMetadata,
-    Message,
-    MessageStreamEvent,
-    Usage,
-)
-from aiollm.providers.anthropic.types.options import (
-    AnthropicGenerationOptions,
-)
-from aiollm.providers.openai import OpenAIClient
-from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
-from aiollm.providers.openai.client import session_factory
-from aiollm.providers.openai.methods import CreateResponse, StreamResponse
-from aiollm.providers.openai.types import (
-    OpenAIFile,
-    Response,
-    ResponseStreamEvent,
-    ResponseUsage,
-)
-from aiollm.providers.openai.types.options import OpenAIGenerationOptions
 from aiollm.resources import (
     AdapterStreamUseCase,
     AdapterUseCase,
@@ -90,6 +62,19 @@ from aiollm.resources import (
 from aiollm.response import map_stream
 from aiollm.session import CallOptions, ISession, ISessionFactory
 from aiollm.session.aiohttp import AiohttpSession
+from aiollm.testing.echo import (
+    EchoClient,
+    EchoGenerationAdapter,
+    session_factory,
+)
+from aiollm.testing.echo.methods import Generate as EchoGenerate
+from aiollm.testing.echo.methods import StreamGenerate
+from aiollm.testing.echo.types import (
+    EchoEvent,
+    EchoFile,
+    EchoGenerationOptions,
+    EchoResponse,
+)
 from aiollm.types.requests import (
     DocumentPart,
     GenerationRequest,
@@ -100,7 +85,6 @@ from aiollm.types.requests import (
     TextPart,
     Tool,
     ToolCall,
-    ToolCallTurn,
     Turn,
 )
 from aiollm.types.responses import (
@@ -108,7 +92,6 @@ from aiollm.types.responses import (
     GenerationResponse,
     OtherEvent,
     StoredFile,
-    TokenUsage,
 )
 
 
@@ -273,11 +256,12 @@ def methods_implement_protocols() -> None:
     assert_type(streamed.response_type, type[bytes] | None)
 
 
-async def client_infers_result(client: OpenAIClient) -> IClient:
+async def client_infers_result(client: EchoClient) -> IClient:
     assert_type(await client.send_request(GetModel(model_id="m")), Model)
     request = GenerationRequest(model="m", input="x")
     assert_type(
-        await client.generation.create(request), GenerationResponse[Response]
+        await client.generation.create(request),
+        GenerationResponse[EchoResponse],
     )
 
     async with client.stream(Download()) as chunks:
@@ -337,13 +321,13 @@ def use_case_implements_protocol(
 
 def stream_use_case_implements_protocol(
     session: AiohttpSession,
-) -> IStreamUseCase[GenerationRequest, GenerationEvent[ResponseStreamEvent]]:
-    return AdapterStreamUseCase(session, OpenAIGenerationAdapter())
+) -> IStreamUseCase[GenerationRequest, GenerationEvent[EchoEvent]]:
+    return AdapterStreamUseCase(session, EchoGenerationAdapter())
 
 
 def stream_use_case_checks_its_event_type(session: AiohttpSession) -> None:
     wrong: IStreamUseCase[GenerationRequest, GenerationEvent[str]]
-    wrong = AdapterStreamUseCase(session, OpenAIGenerationAdapter())  # type: ignore[arg-type]
+    wrong = AdapterStreamUseCase(session, EchoGenerationAdapter())  # type: ignore[arg-type]
     assert wrong
 
 
@@ -353,8 +337,8 @@ def everything_with_a_session_is_a_session_access(
     return [
         BaseResource(session),
         Echo(session),
-        AdapterStreamUseCase(session, OpenAIGenerationAdapter()),
-        GenerationResource(session, OpenAIGenerationAdapter()),
+        AdapterStreamUseCase(session, EchoGenerationAdapter()),
+        GenerationResource(session, EchoGenerationAdapter()),
     ]
 
 
@@ -491,27 +475,6 @@ async def generation_resource_infers_the_types(
     GenerationResource(session, TextAdapter())  # type: ignore[arg-type]
 
 
-async def openai_responses_infer_their_types(session: AiohttpSession) -> None:
-    create = CreateResponse(model="m", input="x", instructions="Be brief")
-    assert_type(await session.send_request(create), Response)
-    async with session.stream(StreamResponse(model="m", input="x")) as events:
-        assert_type(events, Stream[ResponseStreamEvent])
-    CreateResponse(model="m", input="x", max_tokens=16)  # type: ignore[call-arg]
-
-
-async def openai_generation_infers_its_types(session: AiohttpSession) -> None:
-    generation = GenerationResource(session, OpenAIGenerationAdapter())
-    request = GenerationRequest(model="m", input="x")
-    response = await generation.create(request)
-    assert_type(response, GenerationResponse[Response])
-    assert_type(response.incomplete_reason, IncompleteReason | None)
-    assert_type(response.raw_incomplete_reason, str | None)
-    assert_type(response.refusal, str | None)
-    assert_type(response.to_turn(), Turn | ToolCallTurn)
-    async with generation.stream(request) as events:
-        assert_type(events, GenerationStream[ResponseStreamEvent])
-
-
 def turns_are_typed() -> None:
     assert_type(Turn.user("x"), Turn)
     assert_type(Turn.assistant("x").role, Role)
@@ -520,58 +483,24 @@ def turns_are_typed() -> None:
     GenerationRequest(model="m", input=history)
 
 
-async def anthropic_messages_infer_types(session: AiohttpSession) -> None:
-    turn = UserMessageParam(role="user", content="x")
-    create = CreateMessage(model="m", max_tokens=16, messages=[turn])
-    assert_type(await session.send_request(create), Message)
-    stream = StreamMessage(model="m", max_tokens=16, messages=[turn])
+async def echo_methods_infer_their_types(session: AiohttpSession) -> None:
+    create = EchoGenerate(model="m", input=[{"role": "user", "content": "x"}])
+    assert_type(await session.send_request(create), EchoResponse)
+    stream = StreamGenerate(model="m", input=[])
     async with session.stream(stream) as events:
-        assert_type(events, Stream[MessageStreamEvent])
-    CreateMessage(model="m", max_tokens=16, messages=[turn], temperature=1)  # type: ignore[call-arg]
+        assert_type(events, Stream[EchoEvent])
 
 
-async def anthropic_generation_infers_its_types(
-    client: AnthropicClient,
-) -> None:
-    request = GenerationRequest(model="m", input="x")
-    response = await client.generation.create(request)
-    assert_type(response, GenerationResponse[Message])
-    async with client.generation.stream(request) as events:
-        assert_type(events, GenerationStream[MessageStreamEvent])
-    AnthropicClient("sk", default_max_tokens="1")  # type: ignore[arg-type]
-
-
-def no_usage(source: Usage, /) -> TokenUsage:
-    """A plain function is a conversion of Anthropic's counts."""
-    return TokenUsage(input_tokens=source.input_tokens)
-
-
-def openai_usage(source: ResponseUsage, /) -> TokenUsage:
-    """A conversion of OpenAI's counts, not Anthropic's."""
-    return TokenUsage(input_tokens=source.input_tokens)
-
-
-def conversions_are_typed(
-    stop: IConversion[Response, GenerationStop],
-    response: Response,
-) -> None:
-    assert_type(stop(response), GenerationStop)
-    AnthropicGenerationAdapter(usage_conversion=no_usage)
-    OpenAIGenerationAdapter(stop_conversion=stop)
-    AnthropicGenerationAdapter(usage_conversion=openai_usage)  # type: ignore[arg-type]
-    AnthropicGenerationAdapter(stop_conversion=stop)  # type: ignore[arg-type]
-
-
-async def generation_takes_keyword_arguments(client: OpenAIClient) -> None:
+async def generation_takes_keyword_arguments(client: EchoClient) -> None:
     response = await client.generation.create(model="m", input="x")
-    assert_type(response, GenerationResponse[Response])
+    assert_type(response, GenerationResponse[EchoResponse])
     async with client.generation.stream(
         model="m", input=[Turn.user("x")], max_output_tokens=16
     ) as events:
         async for text in events.text():
             assert_type(text, str)
         completed = await events.final()
-        assert_type(completed, CompletedEvent[ResponseStreamEvent])
+        assert_type(completed, CompletedEvent[EchoEvent])
         assert_type(completed.model, str)
         assert_type(completed.text, str | None)
     await client.generation.create(model="m", inputs="x")  # type: ignore[call-overload]
@@ -601,7 +530,7 @@ async def generation_takes_callable_tools(
             pass
 
 
-async def tool_runner_takes_callable_tools(client: OpenAIClient) -> None:
+async def tool_runner_takes_callable_tools(client: EchoClient) -> None:
     @tool
     def lookup(city: str) -> str:
         return city
@@ -617,7 +546,7 @@ async def tool_runner_takes_callable_tools(client: OpenAIClient) -> None:
 
 
 async def generation_takes_the_call_options(
-    client: OpenAIClient,
+    client: EchoClient,
     request: GenerationRequest,
 ) -> None:
     once = RetryPolicy(max_attempts=1)
@@ -628,66 +557,60 @@ async def generation_takes_the_call_options(
         timeout=5,
         retry_policy=once,
     )
-    assert_type(response, GenerationResponse[Response])
+    assert_type(response, GenerationResponse[EchoResponse])
     await client.generation.create(request, timeout=5.0, retry_policy=once)
     async with client.generation.stream(request, headers=Headers()) as events:
-        assert_type(events, GenerationStream[ResponseStreamEvent])
+        assert_type(events, GenerationStream[EchoEvent])
     await client.generation.create(request, timeout="5")  # type: ignore[call-overload]
     await client.generation.create(request, retry_policy=1)  # type: ignore[call-overload]
     await client.generation.create(request, retries=1)  # type: ignore[call-overload]
 
 
 def clients_take_session_arguments() -> None:
-    OpenAIClient("sk", max_body_size=1_000, trust_env=True)
-    AnthropicClient("sk", default_max_tokens=8, follow_redirects=True)
-    OpenAIClient("sk", max_body_sizee=1)  # type: ignore[call-arg]
-    AnthropicClient("sk", trust_env="yes")  # type: ignore[arg-type]
+    EchoClient("sk", max_body_size=1_000, trust_env=True)
+    EchoClient("sk", follow_redirects=True)
+    EchoClient("sk", max_body_sizee=1)  # type: ignore[call-arg]
+    EchoClient("sk", trust_env="yes")  # type: ignore[arg-type]
 
 
 def any_generation_client(client: IGenerationClient) -> IGenerationClient:
     return client
 
 
-def clients_are_generation_clients(
-    openai: OpenAIClient,
-    anthropic: AnthropicClient,
-) -> None:
-    typed: IGenerationClient[Response, ResponseStreamEvent] = openai
-    resource: IGenerationResource[Response, ResponseStreamEvent]
+def clients_are_generation_clients(echo: EchoClient) -> None:
+    typed: IGenerationClient[EchoResponse, EchoEvent] = echo
+    resource: IGenerationResource[EchoResponse, EchoEvent]
     resource = typed.generation
-    assert resource.session is openai.session
-    any_generation_client(anthropic)
-    any_generation_client(BaseClient(openai.session))  # type: ignore[arg-type]
+    assert resource.session is echo.session
+    any_generation_client(echo)
+    any_generation_client(BaseClient(echo.session))  # type: ignore[arg-type]
 
 
 def any_files_client(client: IFilesClient) -> IFilesClient:
     return client
 
 
-async def clients_are_files_clients(
-    openai: OpenAIClient,
-    anthropic: AnthropicClient,
-) -> None:
-    typed: IFilesClient[OpenAIFile] = openai
-    resource: IFilesResource[OpenAIFile] = typed.files
-    assert resource.session is openai.session
-    any_files_client(anthropic)
-    any_files_client(BaseClient(openai.session))  # type: ignore[arg-type]
+async def clients_are_files_clients(echo: EchoClient) -> None:
+    typed: IFilesClient[EchoFile] = echo
+    resource: IFilesResource[EchoFile] = typed.files
+    assert resource.session is echo.session
+    any_files_client(echo)
+    any_files_client(BaseClient(echo.session))  # type: ignore[arg-type]
 
-    stored = await anthropic.files.upload(b"%PDF", expires_in_seconds=3600)
-    assert_type(stored, StoredFile[FileMetadata])
+    stored = await echo.files.upload(b"%PDF", expires_in_seconds=3600)
+    assert_type(stored, StoredFile[EchoFile])
     assert_type(stored.ref, ProviderFile)
-    await openai.files.upload(b"%PDF", provider_options={"purpose": "vision"})
-    await openai.files.upload(
+    await echo.files.upload(b"%PDF", provider_options={"purpose": "vision"})
+    await echo.files.upload(
         b"%PDF",
-        provider_options={"purpose": "photos"},  # type: ignore[arg-type]
+        provider_options={"purpos": "vision"},  # type: ignore[arg-type]
     )
-    await openai.files.upload("report.pdf")  # type: ignore[arg-type]
-    await openai.files.delete(stored.ref, timeout=5)
-    await openai.files.delete("file-abc")  # type: ignore[arg-type]
-    async for item in openai.files.list():
-        assert_type(item, StoredFile[OpenAIFile])
-    async with anthropic.files.download(stored.ref) as content:
+    await echo.files.upload("report.pdf")  # type: ignore[arg-type]
+    await echo.files.delete(stored.ref, timeout=5)
+    await echo.files.delete("file-abc")  # type: ignore[arg-type]
+    async for item in echo.files.list():
+        assert_type(item, StoredFile[EchoFile])
+    async with echo.files.download(stored.ref) as content:
         assert_type(content, Stream[bytes])
     DocumentPart(file=stored.ref)
 
@@ -695,74 +618,55 @@ async def clients_are_files_clients(
 def session_factories_are_typed() -> None:
     factory: ISessionFactory[AiohttpSession, BearerAuth, ...] = session_factory
     assert_type(factory("sk"), AiohttpSession)
-    session: ISession = OpenAIClient.session_factory("sk")
+    session: ISession = EchoClient.session_factory("sk")
     assert session
 
 
-def openai_adapter(client: object) -> OpenAIGenerationAdapter:
-    return OpenAIGenerationAdapter()
+def echo_adapter(client: object) -> EchoGenerationAdapter:
+    return EchoGenerationAdapter()
 
 
 def clients_bind_their_resources() -> None:
     assert_type(
-        OpenAIClient("sk").generation,
-        GenerationResource[
-            Response, ResponseStreamEvent, OpenAIGenerationOptions
-        ],
-    )
-    assert_type(
-        AnthropicClient("sk").generation,
-        GenerationResource[
-            Message, MessageStreamEvent, AnthropicGenerationOptions
-        ],
+        EchoClient("sk").generation,
+        GenerationResource[EchoResponse, EchoEvent, EchoGenerationOptions],
     )
     resource = bind_resource(
-        GenerationResource[
-            Response, ResponseStreamEvent, OpenAIGenerationOptions
-        ],
-        OpenAIGenerationAdapter,
-        adapter_factory=openai_adapter,
+        GenerationResource[EchoResponse, EchoEvent, EchoGenerationOptions],
+        EchoGenerationAdapter,
+        adapter_factory=echo_adapter,
     )
     assert_type(
         resource,
-        GenerationResource[
-            Response, ResponseStreamEvent, OpenAIGenerationOptions
-        ],
+        GenerationResource[EchoResponse, EchoEvent, EchoGenerationOptions],
     )
     # An adapter of options the resource does not take.
-    no_options = GenerationResource[Response, ResponseStreamEvent]
-    bind_resource(no_options, OpenAIGenerationAdapter)  # type: ignore[arg-type]
+    no_options = GenerationResource[EchoResponse, EchoEvent]
+    bind_resource(no_options, EchoGenerationAdapter)  # type: ignore[arg-type]
     bind_resource(
-        GenerationResource[
-            Response, ResponseStreamEvent, OpenAIGenerationOptions
-        ],
-        OpenAIGenerationAdapter,
+        GenerationResource[EchoResponse, EchoEvent, EchoGenerationOptions],
+        EchoGenerationAdapter,
         adapter_factory=lambda client: 1,  # type: ignore[arg-type, return-value]
     )
-    bind_resource(GenerationResource[Response, ResponseStreamEvent])  # type: ignore[call-arg]
-    assert_type(OpenAIClient.provider, Provider)
+    bind_resource(GenerationResource[EchoResponse, EchoEvent])  # type: ignore[call-arg]
+    assert_type(EchoClient.provider, Provider)
 
 
 async def provider_options_are_typed(request: GenerationRequest) -> None:
-    generation = OpenAIClient("sk").generation
+    generation = EchoClient("sk").generation
     response = await generation.create(
-        request, provider_options={"store": False, "temperature": 0.2}
+        request, provider_options={"stop": ["END"], "temperature": 0.2}
     )
-    assert_type(response, GenerationResponse[Response])
+    assert_type(response, GenerationResponse[EchoResponse])
     await generation.create(
-        model="m", input="x", provider_options={"store": None}, timeout=5
+        model="m", input="x", provider_options={"stop": []}, timeout=5
     )
     async with generation.stream(
-        request, provider_options={"top_p": 0.5}
+        request, provider_options={"temperature": 0.5}
     ) as events:
-        assert_type(events, GenerationStream[ResponseStreamEvent])
-    await generation.create(request, provider_options={"stor": False})  # type: ignore[call-overload]
+        assert_type(events, GenerationStream[EchoEvent])
+    await generation.create(request, provider_options={"stopp": []})  # type: ignore[call-overload]
     await generation.create(request, provider_options={"temperature": "hot"})  # type: ignore[call-overload]
-    anthropic = AnthropicClient("sk").generation
-    await anthropic.create(
-        request, provider_options={"stop_sequences": ["END"]}
-    )
-    await anthropic.create(request, provider_options={"store": False})  # type: ignore[call-overload]
     await neutral_resource_has_no_options(generation, request)
 
 
@@ -778,7 +682,7 @@ async def effort_is_typed(client: IGenerationClient) -> None:
 
 
 async def neutral_resource_has_no_options(
-    generation: IGenerationResource[Response, ResponseStreamEvent],
+    generation: IGenerationResource[EchoResponse, EchoEvent],
     request: GenerationRequest,
 ) -> None:
     await generation.create(request, provider_options={})  # type: ignore[call-overload]
