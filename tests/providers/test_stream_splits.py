@@ -17,9 +17,9 @@ import pytest
 from aiollm.providers.anthropic.adapters import AnthropicGenerationAdapter
 from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
 from aiollm.resources.generation import GenerationResource
+from aiollm.testing import FakeStreamResponse, FakeTransport
 from aiollm.types.requests.generation import GenerationRequest
 from aiollm.types.responses.events import TextDeltaEvent
-from tests.conftest import FakeStreamResponse, FakeTransport
 from tests.providers.test_wire_contracts import load
 
 REQUEST = GenerationRequest(model="model-1", input="Hi")

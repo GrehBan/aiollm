@@ -1,0 +1,140 @@
+{
+  "aiollm.adapters.base": [
+    "BaseCompositeAdapter",
+    "BaseConversion",
+    "BaseFilesAdapter"
+  ],
+  "aiollm.adapters.protocols": [
+    "IConversion"
+  ],
+  "aiollm.adapters.stop": [
+    "Stop"
+  ],
+  "aiollm.adapters.validation": [
+    "check_conversation",
+    "check_files",
+    "checked_options",
+    "merge_options",
+    "request_errors"
+  ],
+  "aiollm.client.base": [
+    "BaseProviderClient"
+  ],
+  "aiollm.client.binding": [
+    "bind_resource"
+  ],
+  "aiollm.enums": [
+    "BodyFormat",
+    "IncompleteReason",
+    "Provider",
+    "ResponseFormat",
+    "Role",
+    "ToolChoice"
+  ],
+  "aiollm.exceptions": [
+    "RequestValidationError"
+  ],
+  "aiollm.http.api": [
+    "BaseAPI"
+  ],
+  "aiollm.http.auth": [
+    "BearerAuth"
+  ],
+  "aiollm.http.exceptions.resolver": [
+    "BaseErrorResolver"
+  ],
+  "aiollm.http.exceptions.response": [
+    "APIResponseError"
+  ],
+  "aiollm.http.exceptions.status": [
+    "APIStatusError",
+    "QuotaExceededError",
+    "ServiceUnavailableError"
+  ],
+  "aiollm.http.headers": [
+    "AUTHORIZATION",
+    "X_API_KEY"
+  ],
+  "aiollm.methods.base": [
+    "BaseAPIMethod",
+    "BaseStreamMethod"
+  ],
+  "aiollm.resources.files": [
+    "FilesResource"
+  ],
+  "aiollm.resources.generation": [
+    "GenerationResource"
+  ],
+  "aiollm.response.parse.buffered": [
+    "BufferedResponseParser"
+  ],
+  "aiollm.response.parse.stream": [
+    "StreamResponseParser"
+  ],
+  "aiollm.session.aiohttp": [
+    "AiohttpSession",
+    "AiohttpSessionOptions"
+  ],
+  "aiollm.session.factory": [
+    "SessionFactory"
+  ],
+  "aiollm.session.protocols": [
+    "ISession"
+  ],
+  "aiollm.types.base": [
+    "BaseAPIType",
+    "BaseAPITypeExtra"
+  ],
+  "aiollm.types.files": [
+    "InputFile"
+  ],
+  "aiollm.types.matchers": [
+    "EventTypes",
+    "FieldValues",
+    "TopLevelError"
+  ],
+  "aiollm.types.requests.content": [
+    "ContentPart",
+    "DocumentPart",
+    "ImagePart",
+    "ProviderFile"
+  ],
+  "aiollm.types.requests.generation": [
+    "ForcedTool",
+    "GenerationRequest",
+    "InputItem",
+    "NativeOutput",
+    "NoProviderOptions",
+    "Tool",
+    "ToolCall",
+    "ToolCallTurn",
+    "ToolResult",
+    "Turn"
+  ],
+  "aiollm.types.requests.upload": [
+    "FileUpload"
+  ],
+  "aiollm.types.responses.events": [
+    "CompletedEvent",
+    "GenerationEvent",
+    "OtherEvent",
+    "ReasoningDeltaEvent",
+    "TextDeltaEvent",
+    "ToolCallDeltaEvent",
+    "ToolCallDoneEvent",
+    "ToolCallStartEvent"
+  ],
+  "aiollm.types.responses.files": [
+    "StoredFile"
+  ],
+  "aiollm.types.responses.generation": [
+    "GenerationResponse",
+    "TokenUsage",
+    "ToolCall"
+  ],
+  "aiollm.types.unknown": [
+    "BaseUnknown",
+    "UNKNOWN",
+    "by_type"
+  ]
+}

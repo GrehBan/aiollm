@@ -20,7 +20,8 @@ from aiollm.http.exceptions.transport import (
 )
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
 from aiollm.session.aiohttp import AiohttpSession
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 
 pytestmark = pytest.mark.integration
 

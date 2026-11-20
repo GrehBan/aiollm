@@ -50,7 +50,7 @@ class ResourceBinding[AdapterT, ResourceT]:
         """Name the adapter class of the binding.
 
         Returns:
-            Such as ``ResourceBinding(OpenAIGenerationAdapter)``.
+            Such as ``ResourceBinding(ExampleGenerationAdapter)``.
         """
         return f"{type(self).__name__}({self.adapter_type.__name__})"
 

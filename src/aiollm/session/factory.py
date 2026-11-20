@@ -27,8 +27,8 @@ class SessionFactory[SessionT: ISession, AuthT: IAuth, **P]:
         >>> factory = SessionFactory(
         ...     AiohttpSession,
         ...     auth_factory=BearerAuth,
-        ...     api=OPENAI_API,
-        ...     error_resolver=OpenAIErrorResolver(),
+        ...     api=EXAMPLE_API,
+        ...     error_resolver=ExampleErrorResolver(),
         ... )
         >>> session = factory("sk-...", max_body_size=10_000_000)
     """

@@ -109,7 +109,12 @@
     "ICompositeAdapter",
     "IConversion",
     "IStreamAdapter",
-    "Stop"
+    "Stop",
+    "check_conversation",
+    "check_files",
+    "checked_options",
+    "merge_options",
+    "request_errors"
   ],
   "aiollm.client": [
     "BaseClient",
@@ -1152,6 +1157,19 @@
     "IRetryPredicate",
     "RetryPolicy",
     "RetryState"
+  ],
+  "aiollm.testing": [
+    "Chunk",
+    "FakeStreamResponse",
+    "FakeTransport",
+    "LocalAPI",
+    "NOW",
+    "Outcome",
+    "RecordedPart",
+    "RecordedRequest",
+    "Reply",
+    "TEST_TOKEN",
+    "make_method"
   ],
   "aiollm.types": [
     "AnyOf",

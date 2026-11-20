@@ -13,8 +13,8 @@ from aiollm.methods.base import BaseAPIMethod, BaseMethod, BaseStreamMethod
 from aiollm.response.parse.buffered import BufferedResponseParser
 from aiollm.response.parse.sse import ServerSentEvent
 from aiollm.response.parse.stream import StreamResponseParser
+from aiollm.testing import make_method
 from aiollm.types.base import BaseAPIType
-from tests.conftest import make_method
 
 
 class Model(BaseAPIType):

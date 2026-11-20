@@ -111,6 +111,7 @@ nav:
       - adapters: reference/adapters.md
       - resources: reference/resources.md
       - serialization: reference/serialization.md
+      - testing: reference/testing.md
       - providers.openai: reference/openai.md
       - providers.anthropic: reference/anthropic.md
   - Shared field mapping: unification.md

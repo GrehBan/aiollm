@@ -20,9 +20,9 @@ from aiollm.methods.base import BaseAPIMethod
 from aiollm.response.buffered import BufferedResponse
 from aiollm.response.parse.buffered import BufferedResponseParser
 from aiollm.serialization.json import loads
+from aiollm.testing import make_method
 from aiollm.types.base import BaseAPIType
 from aiollm.types.matchers import FieldValues
-from tests.conftest import make_method
 
 
 class Status(enum.StrEnum):

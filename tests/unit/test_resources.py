@@ -57,6 +57,7 @@ from aiollm.response.buffered import BufferedResponse
 from aiollm.response.stream import Stream, map_stream
 from aiollm.session.protocols import CallOptions
 from aiollm.session.retry import RetryPolicy
+from aiollm.testing import FakeStreamResponse, FakeTransport
 from aiollm.types.base import BaseAPIType
 from aiollm.types.matchers import EventTypes
 from aiollm.types.requests import ToolCall
@@ -78,7 +79,6 @@ from aiollm.types.responses.generation import (
     GenerationResponse,
     TokenUsage,
 )
-from tests.conftest import FakeStreamResponse, FakeTransport
 
 ANTHROPIC_PROVIDER = Provider("anthropic")
 OPENAI_PROVIDER = Provider("openai")

@@ -1,11 +1,14 @@
 """Packages import only from the layers below them (CLAUDE.md).
 
 The order is core → data and HTTP primitives → methods → response →
-session → client → adapters → resources → providers. The exceptions are
-the ones ``CLAUDE.md`` names: ``methods/base.py`` imports the default
-parsers, and protocols that refer to each other import under
-``TYPE_CHECKING``. Transport modules are never imported from an
-``__init__.py``, except a provider package's.
+session → client → adapters → resources → providers → testing. The
+exceptions are the ones ``CLAUDE.md`` names: ``methods/base.py``
+imports the default parsers, and protocols that refer to each other
+import under ``TYPE_CHECKING``. Transport modules are never imported from an
+``__init__.py``, except a provider package's. The core imports no
+provider package, and its infrastructure (everything but the shared
+generation and files layer and the providers) does not import that
+shared layer, so the two could be split apart.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ LAYERS = {
     "adapters": 6,
     "resources": 7,
     "providers": 8,
+    "testing": 9,
 }
 """The layer of each top-level package or module of ``aiollm``."""
 
@@ -42,6 +46,9 @@ ALLOWED = {("methods/base.py", "response.parse")}
 
 TRANSPORTS = {"aiohttp"}
 """Names of transport modules (``<layer>/<transport>.py``)."""
+
+SHARED = ("types.requests", "types.responses", "adapters", "resources")
+"""The shared generation and files layer, as dotted targets."""
 
 
 @dataclass(frozen=True)
@@ -122,6 +129,45 @@ def transport_imports(found: list[Import]) -> list[str]:
     ]
 
 
+def in_package(target: str, packages: tuple[str, ...]) -> bool:
+    """Whether a module path or a dotted target is in one of the packages."""
+    dotted = target.removesuffix(".py").replace("/", ".")
+    return any(
+        dotted == package or dotted.startswith(f"{package}.")
+        for package in packages
+    )
+
+
+def shared_layer_imports(found: list[Import]) -> list[str]:
+    """Imports of the shared layer by the infrastructure."""
+    return [
+        f"{item.module}:{item.line} imports {item.target}"
+        for item in found
+        if not in_package(item.module, (*SHARED, "providers"))
+        and in_package(item.target, SHARED)
+    ]
+
+
+def provider_imports(module: str, source: str) -> list[str]:
+    """Imports of a provider package by a module of the core."""
+    found = []
+
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            names = [node.module or ""]
+        else:
+            continue
+        found += [
+            f"{module}:{node.lineno} imports {name}"
+            for name in names
+            if name.startswith(("aiollm.providers", "aiollm_"))
+        ]
+
+    return found
+
+
 def library_imports() -> list[Import]:
     """The ``aiollm`` imports of every module of the library."""
     found = []
@@ -152,6 +198,24 @@ def test_no_module_imports_from_a_higher_layer() -> None:
 
 def test_no_init_imports_a_transport() -> None:
     assert transport_imports(library_imports()) == []
+
+
+def test_the_infrastructure_does_not_import_the_shared_layer() -> None:
+    assert shared_layer_imports(library_imports()) == []
+
+
+def test_the_core_imports_no_provider() -> None:
+    found = [
+        problem
+        for path in sorted(ROOT.rglob("*.py"))
+        if not path.relative_to(ROOT).as_posix().startswith("providers/")
+        for problem in provider_imports(
+            path.relative_to(ROOT).as_posix(),
+            path.read_text(encoding="utf-8"),
+        )
+    ]
+
+    assert found == []
 
 
 CASES = {
@@ -198,6 +262,65 @@ def test_the_check_tells_what_is_allowed(case: str) -> None:
     module, lines, found = CASES[case]
 
     assert violations(imports(module, "\n".join(lines))) == found
+
+
+SHARED_CASES = {
+    "infrastructure-imports-shared": (
+        "client/base.py",
+        "from aiollm.resources.generation import X",
+        ["client/base.py:1 imports resources.generation"],
+    ),
+    "types-imports-requests": (
+        "types/files.py",
+        "from aiollm.types.requests.content import X",
+        ["types/files.py:1 imports types.requests.content"],
+    ),
+    "shared-imports-shared": (
+        "resources/files.py",
+        "from aiollm.types.requests.upload import X",
+        [],
+    ),
+    "shared-imports-infrastructure": (
+        "types/requests/content.py",
+        "from aiollm.types.files import X",
+        [],
+    ),
+    "provider-imports-shared": (
+        "providers/openai/client.py",
+        "from aiollm.resources.files import X",
+        [],
+    ),
+}
+"""Sources the shared-layer check is tried on, and what it must report."""
+
+
+@pytest.mark.parametrize("case", SHARED_CASES)
+def test_the_check_keeps_the_shared_layer_out(case: str) -> None:
+    module, source, found = SHARED_CASES[case]
+
+    assert shared_layer_imports(imports(module, source)) == found
+
+
+@pytest.mark.parametrize(
+    ("source", "found"),
+    [
+        (
+            "from aiollm.providers.openai import X",
+            ["m.py:1 imports aiollm.providers.openai"],
+        ),
+        ("import aiollm_openai", ["m.py:1 imports aiollm_openai"]),
+        (
+            "from aiollm_anthropic.api import X",
+            ["m.py:1 imports aiollm_anthropic.api"],
+        ),
+        ("from aiollm.enums import Provider", []),
+        ("from .providers import X", []),
+    ],
+)
+def test_the_check_finds_a_provider_import(
+    source: str, found: list[str]
+) -> None:
+    assert provider_imports("m.py", source) == found
 
 
 def test_the_check_finds_a_transport_in_an_init() -> None:

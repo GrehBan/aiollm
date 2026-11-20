@@ -30,7 +30,7 @@ from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.providers.openai.client import OpenAIClient
 from aiollm.providers.openai.resolver import OpenAIErrorResolver
 from aiollm.session.aiohttp import AiohttpSession
-from tests.conftest import TEST_TOKEN, FakeTransport
+from aiollm.testing import TEST_TOKEN, FakeTransport
 
 
 @dataclass(frozen=True)

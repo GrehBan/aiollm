@@ -55,6 +55,8 @@ from aiollm.providers.openai.types import Response, ResponseStreamEvent
 from aiollm.providers.openai.types.options import OpenAIGenerationOptions
 from aiollm.response.parse.stream import StreamResponseParser
 from aiollm.session.aiohttp import AiohttpSession
+from aiollm.testing import Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.base import BaseAPIType
 from aiollm.types.matchers import AnyOf, EventTypes
 from aiollm.types.requests import (
@@ -68,7 +70,6 @@ from aiollm.types.requests import (
     Turn,
 )
 from aiollm.types.unknown import BaseUnknown
-from tests.conftest import Recorder, Reply
 from tests.providers import test_anthropic_messages as anthropic
 from tests.providers import test_openai_responses as openai
 from tests.providers.contracts.update import event_tags, type_tags

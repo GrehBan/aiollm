@@ -38,9 +38,9 @@ from aiollm.response.protocols import IStreamResponse
 from aiollm.serialization.json import JsonLoads, loads
 from aiollm.session.retry import DEFAULT_RETRY_POLICY, RetryPolicy, RetryState
 from aiollm.session.retry.runner import calculate_wait
+from aiollm.testing import FakeStreamResponse, FakeTransport, make_method
 from aiollm.types.base import BaseAPIType
 from aiollm.types.files import StreamFile
-from tests.conftest import FakeStreamResponse, FakeTransport, make_method
 
 
 class Model(BaseAPIType):

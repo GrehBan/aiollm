@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -168,6 +168,13 @@ dependencies = [
     { name = "yarl" },
 ]
 
+[package.optional-dependencies]
+testing = [
+    { name = "pytest" },
+    { name = "pytest-aiohttp" },
+    { name = "pytest-asyncio" },
+]
+
 [package.dev-dependencies]
 codegen = [
     { name = "aiollm-codegen" },
@@ -213,10 +220,14 @@ requires-dist = [
     { name = "multidict", specifier = ">=7.2.1" },
     { name = "orjson", specifier = ">=3.13.0" },
     { name = "pydantic", specifier = ">=2.14.1" },
+    { name = "pytest", marker = "extra == 'testing'", specifier = ">=9.2.0" },
+    { name = "pytest-aiohttp", marker = "extra == 'testing'", specifier = ">=1.1.1" },
+    { name = "pytest-asyncio", marker = "extra == 'testing'", specifier = ">=1.4.1" },
     { name = "tenacity", specifier = ">=9.2.1" },
     { name = "typing-extensions", specifier = ">=4.16.0" },
     { name = "yarl", specifier = ">=1.25.1" },
 ]
+provides-extras = ["testing"]
 
 [package.metadata.requires-dev]
 codegen = [{ name = "aiollm-codegen", git = "https://github.com/aiollm-org/aiollm_codegen?rev=e8702bffd3e623d03f3285fb4727f11892b75772" }]

@@ -17,7 +17,7 @@ from aiollm.http.headers import (
     X_API_KEY,
     Headers,
 )
-from tests.conftest import TEST_TOKEN
+from aiollm.testing import TEST_TOKEN
 
 
 def test_headers_default_to_empty() -> None:

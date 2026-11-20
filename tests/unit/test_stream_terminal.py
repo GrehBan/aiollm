@@ -24,10 +24,10 @@ from aiollm.methods.base import BaseStreamMethod
 from aiollm.response.parse.sse import ServerSentEvent
 from aiollm.response.parse.stream import StreamResponseParser
 from aiollm.serialization.json import loads
+from aiollm.testing import FakeStreamResponse, make_method
 from aiollm.types.base import BaseAPIType
 from aiollm.types.matchers import DONE, BaseMatcher, EventTypes
 from aiollm.types.protocols import IEventMatcher
-from tests.conftest import FakeStreamResponse, make_method
 
 
 class Delta(BaseAPIType):

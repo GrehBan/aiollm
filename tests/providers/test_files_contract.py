@@ -36,6 +36,8 @@ from aiollm.providers.openai.client import session_factory as openai_factory
 from aiollm.providers.openai.types import OpenAIFile
 from aiollm.resources import IFilesResource
 from aiollm.session.factory import SessionFactory
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.files import BytesFile
 from aiollm.types.requests import (
     DocumentPart,
@@ -44,7 +46,6 @@ from aiollm.types.requests import (
     TextPart,
     Turn,
 )
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 from tests.providers import test_anthropic_messages as anthropic
 from tests.providers import test_openai_responses as openai
 from tests.providers.test_files_methods import documented

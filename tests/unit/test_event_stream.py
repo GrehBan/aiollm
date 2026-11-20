@@ -22,9 +22,9 @@ from aiollm.response.parse.stream import (
     StreamResponseParser,
 )
 from aiollm.serialization.json import JsonLoads, loads
+from aiollm.testing import FakeStreamResponse, make_method
 from aiollm.types.base import BaseAPIType
 from aiollm.types.matchers import FieldValues
-from tests.conftest import FakeStreamResponse, make_method
 
 
 class Start(BaseAPIType):

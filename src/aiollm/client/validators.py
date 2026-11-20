@@ -28,7 +28,7 @@ def resolve_token(
         token: The API token, if any.
         session: A ready session, if any.
         env: Name of the environment variable with the token, e.g.
-            ``OPENAI_API_KEY``.
+            ``EXAMPLE_API_KEY``.
 
     Returns:
         The token to build a session from, or ``None`` when a session

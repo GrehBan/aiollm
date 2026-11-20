@@ -62,7 +62,7 @@ src/aiollm/
     └── openai/         OpenAIClient, the Responses and Files APIs: methods/, types/, adapters/
 ```
 
-The packages are layers, listed from the bottom up; a module imports only from the layers below it. Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/` (every provider against shared scenarios and the upstream schemas), `tests/typing/` (static checks of the public API) and `tests/docs/` (the examples of these pages).
+The packages are layers, listed from the bottom up; a module imports only from the layers below it. The core never imports a provider, its infrastructure never imports the shared generation and files layer, and a provider takes from the core only the names of its extension API (`tests/unit/extension_api.json`, see [Extending](https://aiollm-org.github.io/aiollm/guide/extending/)). Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/` (every provider against shared scenarios and the upstream schemas), `tests/typing/` (static checks of the public API) and `tests/docs/` (the examples of these pages).
 
 ## Making changes in code
 
@@ -136,7 +136,7 @@ uv run pytest --mypy -m mypy tests/typing
 What the tests expect from a change:
 
 - **Coverage stays at 100 %** of lines and branches in practice (the configured floor is 98 %).
-- **No real API.** Network tests run against the local `Recorder` server from `tests/conftest.py`, which answers only what a test scripted and fails the test on any other request, so a hidden retry cannot pass. API keys from your environment are cleared for every test.
+- **No real API.** Network tests run against the local `Recorder` server of `aiollm.testing` (its fixtures come from the `aiollm.testing.plugin` that `tests/conftest.py` loads), which answers only what a test scripted and fails the test on any other request, so a hidden retry cannot pass. API keys from your environment are cleared for every test.
 - **No sleeps.** Wait for an event or a condition, not for time to pass.
 - **Every supported Python.** CI runs the tests on CPython 3.13, 3.14 and 3.15, on Linux and Windows. To try another version locally with uv, run `UV_PYTHON=3.15 uv run --all-groups pytest` (it rebuilds `.venv` for that version; run `uv sync --all-groups` to go back).
 

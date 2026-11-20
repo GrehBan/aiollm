@@ -49,9 +49,9 @@ class APIKeyAuth:
     """Sends the key as is, in the header named ``header_name``.
 
     Example:
-        >>> auth = APIKeyAuth("sk-ant-...")  # Anthropic: x-api-key
+        >>> auth = APIKeyAuth("sk-...")  # for an X-Api-Key provider
         >>> auth.header_name, auth.encode()
-        ('X-Api-Key', 'sk-ant-...')
+        ('X-Api-Key', 'sk-...')
 
     Attributes:
         key: The API key. Excluded from ``repr`` so it does not leak into

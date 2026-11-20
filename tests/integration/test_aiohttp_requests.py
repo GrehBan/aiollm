@@ -41,8 +41,9 @@ from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
 from aiollm.serialization.values import BaseValueFormatter
 from aiollm.session.aiohttp import AiohttpSession
 from aiollm.session.retry import RetryPolicy
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.base import BaseAPIType
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 
 pytestmark = pytest.mark.integration
 

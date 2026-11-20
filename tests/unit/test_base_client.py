@@ -40,15 +40,15 @@ from aiollm.response.buffered import BufferedResponse
 from aiollm.session.aiohttp import AiohttpSession
 from aiollm.session.factory import SessionFactory
 from aiollm.session.retry import RetryPolicy
-from aiollm.types.requests import GenerationRequest
-from aiollm.types.responses import GenerationResponse
-from tests.conftest import (
+from aiollm.testing import (
     TEST_TOKEN,
     FakeStreamResponse,
     FakeTransport,
     LocalAPI,
     make_method,
 )
+from aiollm.types.requests import GenerationRequest
+from aiollm.types.responses import GenerationResponse
 
 
 def factory(resolver: BaseErrorResolver) -> SessionFactory[Any, Any, ...]:

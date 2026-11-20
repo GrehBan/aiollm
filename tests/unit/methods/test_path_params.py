@@ -11,7 +11,7 @@ import pytest
 
 from aiollm.enums import BodyFormat
 from aiollm.methods.base import BaseAPIMethod
-from tests.conftest import make_method
+from aiollm.testing import make_method
 
 
 class Region(enum.StrEnum):
