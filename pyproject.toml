@@ -80,8 +80,11 @@ path = "src/aiollm/__meta__.py"
 packages = ["src/aiollm"]
 
 [project.optional-dependencies]
-# aiollm.testing's pytest plugin and its local server (aiollm.testing.aiohttp).
+# aiollm.testing: the pytest plugin, its local server (aiollm.testing.aiohttp),
+# the shared scenarios (aiollm.testing.contract) and the schema checks
+# (aiollm.testing.wire).
 testing = [
+    "jsonschema>=4.25",
     "pytest>=9.2.0",
     "pytest-aiohttp>=1.1.1",
     "pytest-asyncio>=1.4.1",
@@ -189,6 +192,9 @@ ignore = [
 "tests/**" = [
     "D", # docstrings are not required in tests
     "PLR2004", # magic values are expected in asserts
+]
+"src/aiollm/testing/contract/**" = [
+    "PLR2004", # the scenarios are tests: magic values are expected
 ]
 
 [tool.ruff.lint.mccabe]

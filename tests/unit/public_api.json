@@ -1171,6 +1171,25 @@
     "TEST_TOKEN",
     "make_method"
   ],
+  "aiollm.testing.contract": [
+    "AnotherErrorResolver",
+    "ClientCase",
+    "ClientContract",
+    "FilesCase",
+    "FilesContract",
+    "GenerationCase",
+    "GenerationContract"
+  ],
+  "aiollm.testing.echo": [
+    "ECHO_API",
+    "EchoAPI",
+    "EchoClient",
+    "EchoErrorResolver",
+    "EchoFilesAdapter",
+    "EchoGenerationAdapter",
+    "PROVIDER",
+    "session_factory"
+  ],
   "aiollm.types": [
     "AnyOf",
     "BaseAPIType",

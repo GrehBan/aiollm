@@ -35,6 +35,8 @@ PACKAGES = [
     "aiollm.session.body",
     "aiollm.session.retry",
     "aiollm.testing",
+    "aiollm.testing.contract",
+    "aiollm.testing.echo",
     "aiollm.types",
     "aiollm.types.requests",
     "aiollm.types.responses",

@@ -7,8 +7,9 @@ imports the default parsers, and protocols that refer to each other
 import under ``TYPE_CHECKING``. Transport modules are never imported from an
 ``__init__.py``, except a provider package's. The core imports no
 provider package, and its infrastructure (everything but the shared
-generation and files layer and the providers) does not import that
-shared layer, so the two could be split apart.
+generation and files layer, the providers and the test kit, which runs
+the shared scenarios) does not import that shared layer, so the two
+could be split apart.
 """
 
 from __future__ import annotations
@@ -143,7 +144,7 @@ def shared_layer_imports(found: list[Import]) -> list[str]:
     return [
         f"{item.module}:{item.line} imports {item.target}"
         for item in found
-        if not in_package(item.module, (*SHARED, "providers"))
+        if not in_package(item.module, (*SHARED, "providers", "testing"))
         and in_package(item.target, SHARED)
     ]
 
@@ -283,6 +284,11 @@ SHARED_CASES = {
     "shared-imports-infrastructure": (
         "types/requests/content.py",
         "from aiollm.types.files import X",
+        [],
+    ),
+    "test-kit-imports-shared": (
+        "testing/contract/files.py",
+        "from aiollm.types.requests import X",
         [],
     ),
     "provider-imports-shared": (

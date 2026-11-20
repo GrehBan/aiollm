@@ -44,12 +44,20 @@ Use `ai-api-endpoint` for each: types, methods, snapshot, `Case`, adapters.
 
 ## 3. Shared contracts
 
-- `tests/providers/test_generation_contract.py`: add a `Case` - the same
-  scenarios run against every provider's `client.generation`.
-- `tests/providers/test_files_contract.py`: add a `Case` when the provider
-  has a Files API (a `BaseFilesAdapter` bound as `files`) - the same
-  scenarios run against every provider's `client.files`.
-- `tests/providers/test_provider_clients.py`: add a `ClientCase`.
+The scenarios are the classes of `aiollm.testing.contract`; a provider
+runs them by subclassing each with its case (`aiollm.testing.echo` and
+`tests/testing/test_echo_contracts.py` are a whole worked example).
+
+- `tests/providers/test_generation_contract.py`: add a `GenerationCase`
+  and a `GenerationContract` subclass - the same scenarios run against
+  every provider's `client.generation`.
+- `tests/providers/test_files_contract.py`: add a `FilesCase` and a
+  `FilesContract` subclass when the provider has a Files API (a
+  `BaseFilesAdapter` bound as `files`).
+- `tests/providers/test_provider_clients.py`: add a `ClientCase` and a
+  `ClientContract` subclass.
+- A scenario that would need a branch for the provider gets a case field
+  instead; the scenarios never name a provider.
 - `test_<name>_client.py` keeps only what is the provider's own.
 - `docs/unification.md`: a column's worth of mapping for every shared field
   and error case.
