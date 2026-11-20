@@ -1,7 +1,7 @@
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/GrehBan/aiollm/master/docs/assets/aiollm_dark.png">
-    <img alt="aiollm" src="https://raw.githubusercontent.com/GrehBan/aiollm/master/docs/assets/aiollm.png" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/aiollm-org/aiollm/master/docs/assets/aiollm_dark.png">
+    <img alt="aiollm" src="https://raw.githubusercontent.com/aiollm-org/aiollm/master/docs/assets/aiollm.png" width="420">
   </picture>
 </h1>
 
@@ -10,7 +10,7 @@ An async-first toolkit for building typed HTTP API clients, aimed at AI provider
 <!-- --8<-- [start:intro] -->
 You describe each API call as a small declarative class: a Pydantic model whose generic argument is its result type. The library sends it over `aiohttp` and returns a validated, statically typed result. It also handles retries, errors, file uploads and streaming, and ships clients for OpenAI and Anthropic with one shared generation API, images, documents and tool calls included.
 
-> **Status: pre-alpha (0.14.0).** The core abstractions are in place, but the public API may still change: before 1.0 a breaking change bumps the minor version (0.9 is followed by 0.10, not 1.0; 1.0 comes when the API is declared stable), see [Versioning](https://grehban.github.io/aiollm/guide/design/#versioning).
+> **Status: pre-alpha (0.14.0).** The core abstractions are in place, but the public API may still change: before 1.0 a breaking change bumps the minor version (0.9 is followed by 0.10, not 1.0; 1.0 comes when the API is declared stable), see [Versioning](https://aiollm-org.github.io/aiollm/guide/design/#versioning).
 
 ## Features
 
@@ -29,7 +29,7 @@ You describe each API call as a small declarative class: a Pydantic model whose 
 The library requires Python 3.13 or newer. It is not on PyPI yet, so install it from source:
 
 ```bash
-git clone https://github.com/GrehBan/aiollm.git
+git clone https://github.com/aiollm-org/aiollm.git
 cd aiollm
 uv sync
 ```
@@ -103,13 +103,13 @@ This sends `POST https://api.example.com/v1/completions` with the body `{"model"
 
 ## Documentation
 
-The guide and the API reference are at **[grehban.github.io/aiollm](https://grehban.github.io/aiollm/)**:
+The guide and the API reference are at **[aiollm-org.github.io/aiollm](https://aiollm-org.github.io/aiollm/)**:
 
-- [Methods](https://grehban.github.io/aiollm/guide/methods/): parameters, body, query and path, result types
-- [Uploads](https://grehban.github.io/aiollm/guide/uploads/) and [streaming](https://grehban.github.io/aiollm/guide/streaming/)
-- [Errors and retries](https://grehban.github.io/aiollm/guide/errors/) and [sessions](https://grehban.github.io/aiollm/guide/sessions/)
-- [Provider clients](https://grehban.github.io/aiollm/guide/providers/) and [shared generation](https://grehban.github.io/aiollm/guide/generation/)
-- [Reference](https://grehban.github.io/aiollm/reference/), generated from the code
+- [Methods](https://aiollm-org.github.io/aiollm/guide/methods/): parameters, body, query and path, result types
+- [Uploads](https://aiollm-org.github.io/aiollm/guide/uploads/) and [streaming](https://aiollm-org.github.io/aiollm/guide/streaming/)
+- [Errors and retries](https://aiollm-org.github.io/aiollm/guide/errors/) and [sessions](https://aiollm-org.github.io/aiollm/guide/sessions/)
+- [Provider clients](https://aiollm-org.github.io/aiollm/guide/providers/) and [shared generation](https://aiollm-org.github.io/aiollm/guide/generation/)
+- [Reference](https://aiollm-org.github.io/aiollm/reference/), generated from the code
 
 ## License
 

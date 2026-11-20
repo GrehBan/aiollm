@@ -2,7 +2,7 @@
 
 Thank you for helping with aiollm. The library is pre-alpha: the public API can still change, and every change is welcome, from a typo to a new provider. For anything larger than a fix, open an issue first and describe the change, so that we agree on the design before you spend time on code.
 
-The guide below walks through one change from start to finish. The rules it refers to are written down in [`CLAUDE.md`](https://github.com/GrehBan/aiollm/blob/master/CLAUDE.md), the project's profile: commands, architecture invariants and conventions. It is written for AI assistants, and it is the most complete description of the code base for people too.
+The guide below walks through one change from start to finish. The rules it refers to are written down in [`CLAUDE.md`](https://github.com/aiollm-org/aiollm/blob/master/CLAUDE.md), the project's profile: commands, architecture invariants and conventions. It is written for AI assistants, and it is the most complete description of the code base for people too.
 
 ## Setting up
 
@@ -68,14 +68,14 @@ The packages are layers, listed from the bottom up; a module imports only from t
 
 At this point you can make any changes in the code that you want: fixes, new features or experiments. A few rules keep the code base consistent, and the checks below enforce most of them:
 
-- **Every module, class and function has a Google-style docstring.** Ruff checks it. A docstring is user documentation: the [reference](https://grehban.github.io/aiollm/reference/) is generated from it.
+- **Every module, class and function has a Google-style docstring.** Ruff checks it. A docstring is user documentation: the [reference](https://aiollm-org.github.io/aiollm/reference/) is generated from it.
 - **Modern Python, the oldest supported version.** Every module starts with `from __future__ import annotations`; use PEP 695 generics (`class Stream[T]`) and nothing newer than Python 3.13 allows.
 - **Public names are exported on purpose.** A name users need goes into its package's `__init__.py` with a sorted `__all__`; everything else stays internal.
 - **Fail early.** A mistake in a method class raises `TypeError` when the class is defined, a bad value raises before anything is sent, and nothing is dropped silently.
-- **Generated code is regenerated, not edited.** A provider's `types/<family>.py` and `methods/params/` come from [aiollm-codegen](https://github.com/GrehBan/aiollm_codegen) through `uv run python scripts/generate_provider_types.py`. The generator (the `codegen` dependency group) and OpenAI's OpenAPI file (a URL and a SHA-256 in the script) are pinned, and CI fails when a regeneration changes any file; fix a defect in aiollm-codegen and move the pin.
-- **Breaking changes are allowed before 1.0, but marked.** Say so in the changelog fragment (see [Describe changes](#describe-changes)); see [Versioning](https://grehban.github.io/aiollm/guide/design/#versioning) for what counts as one.
+- **Generated code is regenerated, not edited.** A provider's `types/<family>.py` and `methods/params/` come from [aiollm-codegen](https://github.com/aiollm-org/aiollm_codegen) through `uv run python scripts/generate_provider_types.py`. The generator (the `codegen` dependency group) and OpenAI's OpenAPI file (a URL and a SHA-256 in the script) are pinned, and CI fails when a regeneration changes any file; fix a defect in aiollm-codegen and move the pin.
+- **Breaking changes are allowed before 1.0, but marked.** Say so in the changelog fragment (see [Describe changes](#describe-changes)); see [Versioning](https://aiollm-org.github.io/aiollm/guide/design/#versioning) for what counts as one.
 
-For a new endpoint or a new provider, read [Extending](https://grehban.github.io/aiollm/guide/extending/): provider methods follow the provider's own JSON schema field by field, and the wire-contract tests check that they do.
+For a new endpoint or a new provider, read [Extending](https://aiollm-org.github.io/aiollm/guide/extending/): provider methods follow the provider's own JSON schema field by field, and the wire-contract tests check that they do.
 
 ## Format the code (code-style)
 
@@ -171,7 +171,7 @@ When the text and the code disagree, the code says what the library does: fix th
 
 ## Describe changes
 
-Describe your changes in one or more sentences so that the developers who use the library know what changed. Create a changelog fragment in the `CHANGES` directory and write the description in it; [towncrier](https://towncrier.readthedocs.io/) turns the fragments into the [changelog](https://grehban.github.io/aiollm/changelog/) when a version is released.
+Describe your changes in one or more sentences so that the developers who use the library know what changed. Create a changelog fragment in the `CHANGES` directory and write the description in it; [towncrier](https://towncrier.readthedocs.io/) turns the fragments into the [changelog](https://aiollm-org.github.io/aiollm/changelog/) when a version is released.
 
 Using traditional approach:
 
@@ -191,7 +191,7 @@ uv run towncrier create +my-change.fixed.md --content "Text of the change."
 - **Do not** bump the version or edit `CHANGELOG.md`: a release is a separate pull request made by the maintainer, so pull requests made side by side never conflict in the changelog.
 - A change no user would notice (tests, CI, internal refactoring) needs no fragment; ask for the `no changelog` label instead.
 
-Preview what the next release holds with `uv run towncrier build --draft`. [`CHANGES/README.md`](https://github.com/GrehBan/aiollm/blob/master/CHANGES/README.md) has the details.
+Preview what the next release holds with `uv run towncrier build --draft`. [`CHANGES/README.md`](https://github.com/aiollm-org/aiollm/blob/master/CHANGES/README.md) has the details.
 
 ## Complete
 
@@ -216,7 +216,7 @@ Many changes to this library are written with [Claude Code](https://claude.com/c
 
 ### What the repository gives Claude
 
-- **[`CLAUDE.md`](https://github.com/GrehBan/aiollm/blob/master/CLAUDE.md)** is loaded into every session: the commands, the invariants that are easy to break and the conventions. If your change alters an invariant or a convention, update `CLAUDE.md` in the same pull request; a stale profile misleads the next session.
+- **[`CLAUDE.md`](https://github.com/aiollm-org/aiollm/blob/master/CLAUDE.md)** is loaded into every session: the commands, the invariants that are easy to break and the conventions. If your change alters an invariant or a convention, update `CLAUDE.md` in the same pull request; a stale profile misleads the next session.
 - **Project skills** in `.claude/skills/` carry the project's workflows, and Claude picks them up when a task matches; you can also call one by name, such as `/ai-api-endpoint`. They are listed in the table below.
 - **Provider documentation.** Point Claude at the providers' official sources: OpenAI's OpenAPI file (`openai/openai-openapi`), Anthropic's SDK types and API reference. The schema snapshot in `tests/providers/contracts/` is rebuilt from the pinned ones by `tests/providers/contracts/update.py`; a weekly workflow (`upstream.yml`, `scripts/refresh_upstream.py`) opens a pull request when a source moves ahead of its pin.
 
