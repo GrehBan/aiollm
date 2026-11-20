@@ -50,12 +50,12 @@ ANTHROPIC_VERSION: Final = "2026-10-21"
 
 OPENAI_OPENAPI_URL: Final = (
     "https://raw.githubusercontent.com/openai/openai-openapi/"
-    "3e288ba501d136b81181919a12a88495a0244488/openapi.yaml"
+    "76a4810f6cec796923bb6f4cc874237571a6305b/openapi.yaml"
 )
-"""OpenAI's OpenAPI file, at the commit of 2026-11-05."""
+"""OpenAI's OpenAPI file, at the commit of 2026-11-20."""
 
 OPENAI_OPENAPI_SHA256: Final = (
-    "cf91be897ab55e4aefcfc44ec1eb7611eea1227509b67178be583244c2680ab3"
+    "e5666b742f332bc67a43f76f2988f21e81cdc48636c3d25f79f15c7d16ab37b8"
 )
 """SHA-256 of that file."""
 
