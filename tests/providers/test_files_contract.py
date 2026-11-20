@@ -25,11 +25,13 @@ from aiollm.http.exceptions.status import (
     ServiceUnavailableError,
 )
 from aiollm.providers.anthropic import AnthropicClient
+from aiollm.providers.anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
 from aiollm.providers.anthropic.client import (
     session_factory as anthropic_factory,
 )
 from aiollm.providers.anthropic.types import FileMetadata
 from aiollm.providers.openai import OpenAIClient
+from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.providers.openai.client import session_factory as openai_factory
 from aiollm.providers.openai.types import OpenAIFile
 from aiollm.resources import IFilesResource
@@ -102,7 +104,7 @@ OPENAI_FILE = documented("openai/files", "createFile")
 ANTHROPIC_FILE = documented("anthropic/files", "createFile")
 
 OPENAI = Case(
-    provider=Provider.OPENAI,
+    provider=OPENAI_PROVIDER,
     client=OpenAIClient,
     factory=openai_factory,
     raw_type=OpenAIFile,
@@ -153,7 +155,7 @@ OPENAI = Case(
 )
 
 ANTHROPIC = Case(
-    provider=Provider.ANTHROPIC,
+    provider=ANTHROPIC_PROVIDER,
     client=AnthropicClient,
     factory=anthropic_factory,
     raw_type=FileMetadata,
@@ -211,9 +213,9 @@ def ref(case: Case) -> ProviderFile:
 def foreign(case: Case) -> ProviderFile:
     """A file of the other provider."""
     other = (
-        Provider.ANTHROPIC
-        if case.provider is Provider.OPENAI
-        else Provider.OPENAI
+        ANTHROPIC_PROVIDER
+        if case.provider == OPENAI_PROVIDER
+        else OPENAI_PROVIDER
     )
     return ProviderFile(provider=other, id="file-of-another")
 

@@ -153,7 +153,7 @@ def request_errors(
             the ``ValidationError`` is its ``__cause__``.
 
     Example:
-        >>> with request_errors(Provider.OPENAI):
+        >>> with request_errors(Provider("openai")):
         ...     method = CreateResponse(**fields)
     """
     names = fields or {}
@@ -259,7 +259,7 @@ def check_files(request: GenerationRequest, provider: Provider) -> None:
             if isinstance(part, TextPart) or part.file is MISSING:
                 continue
             file = part.file
-            if file.provider is provider:
+            if file.provider == provider:
                 continue
             message = (
                 f"item {index} names a file stored by "

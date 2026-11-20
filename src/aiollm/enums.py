@@ -3,21 +3,108 @@
 from __future__ import annotations
 
 from enum import StrEnum, unique
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
+
+from pydantic_core import core_schema
+
+if TYPE_CHECKING:
+    from pydantic import GetCoreSchemaHandler
 
 
-@unique
-class Provider(StrEnum):
+class Provider(str):
     """API provider an error or integration belongs to.
 
+    An open value, not an enum: every provider package declares its own,
+    ``PROVIDER: Final = Provider("openai")`` in its ``api.py``, and the
+    core knows only ``GENERIC``. Two providers are the same when their
+    values are equal, so compare them with ``==``, never with ``is``.
+    A ``Provider`` is a ``str``: it formats, hashes and compares as
+    its value, and a pydantic field of this type takes a non-empty
+    string.
+
     Attributes:
-        OPENAI: OpenAI.
-        ANTHROPIC: Anthropic.
         GENERIC: Not tied to a provider, e.g. the base error resolver.
+
+    Example:
+        >>> ECHO = Provider("echo")
+        >>> ECHO == "echo", ECHO.value
+        (True, 'echo')
+        >>> ECHO == Provider.GENERIC
+        False
     """
 
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
-    GENERIC = "generic"
+    __slots__ = ()
+
+    GENERIC: ClassVar[Provider]
+
+    def __new__(cls, value: str) -> Self:
+        """Create a provider from its value.
+
+        Args:
+            value: The provider's name, such as ``"openai"``.
+
+        Returns:
+            The provider.
+
+        Raises:
+            TypeError: If the value is not a ``str``.
+            ValueError: If the value is empty.
+        """
+        given = cast("object", value)  # not checked at run time
+
+        if not isinstance(given, str):
+            message = f"A provider is a str, not {type(given).__name__}"
+            raise TypeError(message)
+
+        if not value:
+            message = "A provider needs a name"
+            raise ValueError(message)
+
+        return super().__new__(cls, value)
+
+    @property
+    def value(self) -> str:
+        """The provider's name as a plain ``str``.
+
+        Returns:
+            The value the provider was created from.
+        """
+        return str.__str__(self)
+
+    def __repr__(self) -> str:
+        """Show the provider as the call that creates it.
+
+        Returns:
+            ``Provider('<value>')``.
+        """
+        return f"{type(self).__name__}({self.value!r})"
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> core_schema.CoreSchema:
+        """Let Pydantic validate and dump fields of this type.
+
+        Args:
+            source_type: The annotated type.
+            handler: Pydantic's schema handler.
+
+        Returns:
+            A schema that takes a non-empty string, makes it a
+            ``Provider`` and dumps it to JSON as a plain string.
+        """
+        return core_schema.no_info_after_validator_function(
+            cls,
+            core_schema.str_schema(min_length=1),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                str, when_used="json"
+            ),
+        )
+
+
+Provider.GENERIC = Provider("generic")
 
 
 @unique

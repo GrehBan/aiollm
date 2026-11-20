@@ -38,7 +38,7 @@ class CompletionAdapter(
         GenerationEvent[MessageEvent],
     ]
 ):
-    provider = Provider.GENERIC           # a provider the library does not list
+    provider = Provider("completions")    # this provider's own name
 
     def with_options(self, options: NoProviderOptions, /) -> Self:
         # No options of its own: still refuse a key instead of dropping it.

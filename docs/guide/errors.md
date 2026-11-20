@@ -148,7 +148,7 @@ from aiollm import APIStatusError, Provider, QuotaExceededError
 
 
 class ExampleErrorResolver(BaseErrorResolver):
-    provider = Provider.GENERIC                    # Provider is closed
+    provider = Provider("example")                 # the provider's name
     error_statuses = {"insufficient_quota": 429}   # in a stream, too
 
     def classify_status(

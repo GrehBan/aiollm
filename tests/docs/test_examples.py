@@ -605,7 +605,7 @@ async def test_error_resolver(examples: Examples) -> None:
 
     assert type(quota) is QuotaExceededError
     assert quota.transient is False
-    assert quota.provider == "generic"
+    assert quota.provider == "example"
     assert type(rate) is RateLimitError
 
 

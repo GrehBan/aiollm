@@ -80,6 +80,9 @@ from aiollm.types.responses.generation import (
 )
 from tests.conftest import FakeStreamResponse, FakeTransport
 
+ANTHROPIC_PROVIDER = Provider("anthropic")
+OPENAI_PROVIDER = Provider("openai")
+
 
 class RawResponse(BaseAPIType):
     id: str
@@ -117,7 +120,7 @@ def to_event(raw: RawEvent) -> GenerationEvent[RawEvent]:
             return TextDeltaEvent[RawEvent](text=raw.delta, raw=raw)
         case "response.completed":
             return CompletedEvent[RawEvent](
-                provider=Provider.OPENAI, model="m", raw=raw
+                provider=OPENAI_PROVIDER, model="m", raw=raw
             )
         case _:
             return OtherEvent[RawEvent](raw=raw)
@@ -141,7 +144,7 @@ class Generate(
         )
         return GenerationResponse[RawResponse](
             id=raw.id,
-            provider=Provider.OPENAI,
+            provider=OPENAI_PROVIDER,
             model=request.model,
             text=raw.output_text,
             raw=raw,
@@ -179,7 +182,7 @@ async def test_use_case_converts_the_response() -> None:
 
     assert response.text == "Hello"
     assert response.id == "r-1"
-    assert response.provider is Provider.OPENAI
+    assert response.provider == OPENAI_PROVIDER
     assert response.raw == RawResponse(id="r-1", output_text="Hello")
     assert transport.execute_calls[0].get_body_map() == {
         "model": "gpt",
@@ -282,7 +285,7 @@ class ResponsesAdapter(
         GenerationEvent[RawEvent],
     ]
 ):
-    provider = Provider.OPENAI
+    provider = OPENAI_PROVIDER
 
     def with_options(self, options: NoProviderOptions, /) -> Self:
         checked_options(options, NoProviderOptions, self.provider)
@@ -298,7 +301,7 @@ class ResponsesAdapter(
     ) -> GenerationResponse[RawResponse]:
         return GenerationResponse[RawResponse](
             id=raw.id,
-            provider=Provider.OPENAI,
+            provider=OPENAI_PROVIDER,
             model=request.model,
             text=raw.output_text,
             raw=raw,
@@ -351,7 +354,7 @@ async def test_adapter_use_case_responds(use_case: type[Any]) -> None:
 
     assert response == GenerationResponse[RawResponse](
         id="r-1",
-        provider=Provider.OPENAI,
+        provider=OPENAI_PROVIDER,
         model="gpt",
         text="Hello",
         raw=RawResponse(id="r-1", output_text="Hello"),
@@ -604,7 +607,7 @@ def test_turn_is_frozen_and_strict() -> None:
 
 def test_response_becomes_an_assistant_turn() -> None:
     response: GenerationResponse[Any] = GenerationResponse(
-        id="r", provider=Provider.OPENAI, model="m", text="Hello", raw={}
+        id="r", provider=OPENAI_PROVIDER, model="m", text="Hello", raw={}
     )
 
     assert response.to_turn() == Turn.assistant("Hello")
@@ -613,7 +616,7 @@ def test_response_becomes_an_assistant_turn() -> None:
 def test_response_without_text_is_no_turn() -> None:
     response: GenerationResponse[Any] = GenerationResponse(
         id="r",
-        provider=Provider.ANTHROPIC,
+        provider=ANTHROPIC_PROVIDER,
         model="m",
         incomplete_reason=IncompleteReason.REFUSAL,
         raw={},

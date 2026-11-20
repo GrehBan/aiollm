@@ -22,16 +22,17 @@ from aiollm.client.validators import (
     check_same_provider,
     provider_of,
 )
-from aiollm.enums import Provider
 from aiollm.http.auth import APIKeyAuth, BearerAuth
 from aiollm.http.exceptions.resolver import BaseErrorResolver
 from aiollm.http.exceptions.status import ServiceUnavailableError
 from aiollm.http.headers import AUTHORIZATION
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
 from aiollm.providers.anthropic.adapters import AnthropicGenerationAdapter
+from aiollm.providers.anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
 from aiollm.providers.anthropic.resolver import AnthropicErrorResolver
 from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
 from aiollm.providers.openai.api import OPENAI_API
+from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.providers.openai.client import OpenAIClient
 from aiollm.providers.openai.resolver import OpenAIErrorResolver
 from aiollm.resources.generation import GenerationResource
@@ -67,7 +68,7 @@ class ModelsAdapter(
 ):
     """A second adapter of the client, as a ``models`` resource would add."""
 
-    provider = Provider.OPENAI
+    provider = OPENAI_PROVIDER
 
     def __init__(self, *, page_size: int = 20) -> None:
         self.page_size = page_size
@@ -86,7 +87,7 @@ class ModelsAdapter(
 class AnthropicModelsAdapter(ModelsAdapter):
     """The same adapter, of another provider."""
 
-    provider = Provider.ANTHROPIC
+    provider = ANTHROPIC_PROVIDER
 
 
 class ModelsResource:
@@ -110,7 +111,7 @@ def bind_generation(adapter_type: Any = OpenAIGenerationAdapter) -> Any:
 def declare(**parts: Any) -> type[BaseProviderClient]:
     """Declare a provider client with the given parts; ``None`` drops one."""
     namespace: dict[str, Any] = {
-        "provider": Provider.OPENAI,
+        "provider": OPENAI_PROVIDER,
         "session_factory": OPENAI_FACTORY,
         "api_key_env": "EXAMPLE_API_KEY",
         "auth_headers": frozenset({AUTHORIZATION}),
@@ -129,7 +130,7 @@ def declare(**parts: Any) -> type[BaseProviderClient]:
 def test_parts_of_one_provider_are_accepted() -> None:
     client: Any = declare()(TEST_TOKEN)
 
-    assert client.provider is Provider.OPENAI
+    assert client.provider == OPENAI_PROVIDER
     assert isinstance(client.session, AiohttpSession)
     assert isinstance(client.generation, GenerationResource)
     assert client.generation.session is client.session
@@ -142,7 +143,7 @@ def test_parts_of_one_provider_are_accepted() -> None:
     ("parts", "listed"),
     [
         (
-            {"provider": Provider.ANTHROPIC},
+            {"provider": ANTHROPIC_PROVIDER},
             "client=anthropic, error_resolver=openai, "
             "generation adapter OpenAIGenerationAdapter=openai, "
             "models adapter ModelsAdapter=openai",
@@ -328,11 +329,11 @@ def test_on_the_class_a_resource_is_its_binding() -> None:
 
 
 def test_check_same_provider_accepts_one_provider() -> None:
-    check_same_provider(a=Provider.OPENAI, b=Provider.OPENAI)
+    check_same_provider(a=OPENAI_PROVIDER, b=OPENAI_PROVIDER)
 
 
 def test_provider_of_names_the_source() -> None:
-    assert provider_of(OpenAIGenerationAdapter, "adapter") is Provider.OPENAI
+    assert provider_of(OpenAIGenerationAdapter, "adapter") == OPENAI_PROVIDER
 
     with pytest.raises(TypeError, match="The adapter 1 declares no provider"):
         provider_of(1, "adapter")

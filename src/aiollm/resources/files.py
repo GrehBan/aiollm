@@ -236,7 +236,7 @@ class FilesResource[
             RequestValidationError: The file is another provider's.
         """
         provider = self._adapter.provider
-        if file.provider is not provider:
+        if file.provider != provider:
             message = (
                 f"the file is stored by {file.provider.value}, "
                 f"not by {provider.value}"

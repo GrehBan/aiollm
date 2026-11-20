@@ -27,6 +27,9 @@ from aiollm.http.exceptions.transport import (
     APITransportError,
 )
 
+ANTHROPIC_PROVIDER = Provider("anthropic")
+OPENAI_PROVIDER = Provider("openai")
+
 
 class TemplatedError(AIAPIError):
     default_message: ClassVar[str | None] = "Failed {what} after {n} tries."
@@ -76,7 +79,7 @@ def test_api_error_keeps_all_attributes() -> None:
         message="teapot",
         code="tea",
         error_type="kitchen",
-        provider=Provider.OPENAI,
+        provider=OPENAI_PROVIDER,
         request_id="req-1",
         retry_after=1.5,
         transient=True,
@@ -85,7 +88,7 @@ def test_api_error_keeps_all_attributes() -> None:
     assert error.status == 418
     assert error.code == "tea"
     assert error.error_type == "kitchen"
-    assert error.provider is Provider.OPENAI
+    assert error.provider == OPENAI_PROVIDER
     assert error.request_id == "req-1"
     assert error.retry_after == 1.5
     assert error.transient is True
@@ -98,7 +101,7 @@ def test_api_error_defaults() -> None:
     assert error.transient is False
     assert error.code is None
     assert error.error_type is None
-    assert error.provider is Provider.GENERIC
+    assert error.provider == Provider.GENERIC
     assert error.request_id is None
     assert error.retry_after is None
     assert error.message == ""
@@ -221,7 +224,7 @@ class Limited(BaseModel):
 def test_request_errors_use_the_shared_names() -> None:
     with (
         pytest.raises(RequestValidationError) as caught,
-        request_errors(Provider.OPENAI, {"max_tokens": "max_output_tokens"}),
+        request_errors(OPENAI_PROVIDER, {"max_tokens": "max_output_tokens"}),
     ):
         Limited(max_tokens=0, note=5)  # type: ignore[arg-type]
 
@@ -235,7 +238,7 @@ def test_request_errors_use_the_shared_names() -> None:
 def test_request_error_of_the_whole_method_has_no_location() -> None:
     with (
         pytest.raises(RequestValidationError) as caught,
-        request_errors(Provider.ANTHROPIC),
+        request_errors(ANTHROPIC_PROVIDER),
     ):
         Limited(max_tokens=1, note="whole")
 
@@ -247,11 +250,11 @@ def test_request_error_of_the_whole_method_has_no_location() -> None:
 
 def test_request_validation_error_names_provider_and_field() -> None:
     error = RequestValidationError(
-        "must be at least 16", provider=Provider.OPENAI, field="max_tokens"
+        "must be at least 16", provider=OPENAI_PROVIDER, field="max_tokens"
     )
 
     assert isinstance(error, ValueError)
-    assert error.provider is Provider.OPENAI
+    assert error.provider == OPENAI_PROVIDER
     assert error.field == "max_tokens"
     assert str(error) == (
         "openai cannot take the request field 'max_tokens'. "
@@ -262,7 +265,7 @@ def test_request_validation_error_names_provider_and_field() -> None:
 @pytest.mark.parametrize("clone", [copy.copy, copy.deepcopy, "pickle"])
 def test_request_validation_error_copies(clone: Any) -> None:
     error = RequestValidationError(
-        "bad", provider=Provider.ANTHROPIC, field="metadata"
+        "bad", provider=ANTHROPIC_PROVIDER, field="metadata"
     )
 
     copied = (
@@ -273,7 +276,7 @@ def test_request_validation_error_copies(clone: Any) -> None:
 
     assert type(copied) is RequestValidationError
     assert str(copied) == str(error)
-    assert copied.provider is Provider.ANTHROPIC
+    assert copied.provider == ANTHROPIC_PROVIDER
     assert copied.field == "metadata"
 
 

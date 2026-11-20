@@ -34,11 +34,13 @@ from aiollm.http.exceptions.transport import (
 )
 from aiollm.methods.base import BaseStreamMethod
 from aiollm.providers.anthropic import AnthropicClient
+from aiollm.providers.anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
 from aiollm.providers.anthropic.client import (
     session_factory as anthropic_factory,
 )
 from aiollm.providers.anthropic.methods import StreamMessage
 from aiollm.providers.openai import OpenAIClient
+from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.providers.openai.client import session_factory as openai_factory
 from aiollm.providers.openai.methods import StreamResponse
 from aiollm.resources import GenerationResource, IGenerationResource
@@ -345,7 +347,7 @@ class Case:
 
 
 OPENAI = Case(
-    provider=Provider.OPENAI,
+    provider=OPENAI_PROVIDER,
     client=OpenAIClient,
     factory=openai_factory,
     path="/v1/responses",
@@ -520,7 +522,7 @@ OPENAI = Case(
 )
 
 ANTHROPIC = Case(
-    provider=Provider.ANTHROPIC,
+    provider=ANTHROPIC_PROVIDER,
     client=AnthropicClient,
     factory=anthropic_factory,
     path="/v1/messages",
@@ -767,7 +769,7 @@ async def test_create_returns_the_text_and_usage(
     async with client:
         response = await client.generation.create(REQUEST)
 
-    assert response.provider is case.provider
+    assert response.provider == case.provider
     assert response.id == case.response["id"]
     assert response.text == case.text
     assert response.usage == case.usage
@@ -1038,7 +1040,7 @@ async def test_parts_after_tool_results_go_with_them(
 
     *_, results, last = json.loads(recorder.last.body)[case.input_field]
     assert last["content"][-2:] == case.parts["content"][:2]
-    if case.provider is Provider.ANTHROPIC:
+    if case.provider == ANTHROPIC_PROVIDER:
         # One user message: the result first, then the parts.
         assert last["content"][0] == {
             "type": "tool_result",
@@ -1081,7 +1083,7 @@ async def test_a_streamed_tool_loop_continues_with_the_results(
 
     assert isinstance(turn, ToolCallTurn)
     assert turn.native is not MISSING
-    assert turn.native.provider is case.provider
+    assert turn.native.provider == case.provider
     sent = json.loads(recorder.last.body)
     assert sent[case.input_field][1:] == case.continued_streamed
 
@@ -1112,7 +1114,7 @@ async def test_a_tool_loop_continues_with_the_results(
 
     assert isinstance(turn, ToolCallTurn)
     assert turn.native is not MISSING
-    assert turn.native.provider is case.provider
+    assert turn.native.provider == case.provider
     assert answer.text == case.text
     sent = json.loads(recorder.last.body)
     assert sent[case.input_field][1:] == case.continued
@@ -1126,9 +1128,9 @@ async def test_a_turn_of_calls_from_another_provider_sends_its_calls(
     # Another provider's output means nothing here: the shared calls go.
     recorder.reply(Reply(json=case.response))
     foreign = (
-        Provider.ANTHROPIC
-        if case.provider is Provider.OPENAI
-        else (Provider.OPENAI)
+        ANTHROPIC_PROVIDER
+        if case.provider == OPENAI_PROVIDER
+        else (OPENAI_PROVIDER)
     )
     turn = ToolCallTurn(
         text="Checking.",
@@ -1195,7 +1197,7 @@ async def test_calls_and_results_out_of_order_are_refused(
             await client.generation.create(request)
 
     assert caught.value.field == "input"
-    assert caught.value.provider is case.provider
+    assert caught.value.provider == case.provider
 
 
 async def test_a_response_that_stopped_mid_call_is_no_turn(
@@ -1409,7 +1411,7 @@ async def test_an_unknown_provider_option_is_refused_before_sending(
                 ):
                     pass
 
-    assert caught.value.provider is case.provider
+    assert caught.value.provider == case.provider
     assert caught.value.field == "input"
     assert recorder.requests == []
 
@@ -1457,7 +1459,7 @@ async def test_conversation_must_end_with_a_user_turn(
                 async with client.generation.stream(model="m", input=turns):
                     pass
 
-    assert caught.value.provider is case.provider
+    assert caught.value.provider == case.provider
     assert caught.value.field == "input"
     assert recorder.requests == []
 
@@ -1481,7 +1483,7 @@ async def test_conversation_continues_with_the_response(
     sent = json.loads(recorder.last.body)
     turns = (
         sent["input"]
-        if case.provider is Provider.OPENAI
+        if case.provider == OPENAI_PROVIDER
         else (sent["messages"])
     )
     assert turns == [
@@ -1505,7 +1507,7 @@ async def test_stream_yields_deltas_then_completes(
     assert deltas == case.deltas
     last = received[-1]
     assert isinstance(last, CompletedEvent)
-    assert last.provider is case.provider
+    assert last.provider == case.provider
     assert last.usage == case.stream_usage
     assert last.incomplete_reason is None
     assert json.loads(recorder.last.body)["stream"] is True
@@ -1523,7 +1525,7 @@ async def test_stream_error_event_raises_overloaded(
             async for _ in stream:
                 pass
 
-    assert caught.value.provider is case.provider
+    assert caught.value.provider == case.provider
     assert "Overloaded" in str(caught.value)
     # Only opening is retried: the events already arrived.
     assert len(recorder.requests) == 1
@@ -1542,7 +1544,7 @@ async def test_stream_quota_error_is_a_quota_error(
             async for _ in stream:
                 pass
 
-    assert caught.value.provider is case.provider
+    assert caught.value.provider == case.provider
     assert caught.value.transient is False
     assert caught.value.status == 200
     assert len(recorder.requests) == 1
@@ -1605,7 +1607,7 @@ async def test_error_status_raises_before_streaming(
             async with client.generation.stream(REQUEST):
                 pass  # pragma: no cover
 
-    assert created.value.provider is case.provider
+    assert created.value.provider == case.provider
     assert created.value.transient is False
     assert len(recorder.requests) == 2
 

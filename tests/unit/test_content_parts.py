@@ -19,8 +19,11 @@ from aiollm import (
     Turn,
 )
 
+ANTHROPIC_PROVIDER = Provider("anthropic")
+OPENAI_PROVIDER = Provider("openai")
+
 PNG = b"\x89PNG\r\n"
-FILE = ProviderFile(provider=Provider.OPENAI, id="file-abc123")
+FILE = ProviderFile(provider=OPENAI_PROVIDER, id="file-abc123")
 
 
 @pytest.mark.parametrize(
@@ -111,7 +114,7 @@ def test_a_stored_file_is_a_source_of_its_own() -> None:
 
 def test_a_provider_file_needs_an_id_and_is_frozen() -> None:
     with pytest.raises(ValidationError, match="at least 1 character"):
-        ProviderFile(provider=Provider.ANTHROPIC, id="")
+        ProviderFile(provider=ANTHROPIC_PROVIDER, id="")
     with pytest.raises(ValidationError, match="frozen"):
         FILE.id = "file-other"  # type: ignore[misc]
 
