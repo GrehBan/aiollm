@@ -51,8 +51,8 @@ runs the pinned aiollm-codegen (the `codegen` dependency group; `--codegen
 DIR` for a local checkout) for each provider, OpenAI from its official OpenAPI
 file (pinned by URL and SHA-256 in the script, the same file as the contract
 snapshot) restricted to the endpoints' operations, Anthropic from the
-SDK-derived snapshot and the transcribed Files reference, and replaces `providers/<name>/types/<family>.py` and
-`methods/params/`. A new endpoint adds its operation to the script. The
+SDK-derived snapshot and the transcribed Files reference, and replaces
+`providers/<name>/types/<family>.py` and `methods/params/`. A new endpoint adds its operation to the script. The
 generated models already follow the rules the tests check:
 `__upstream_schema__` on every model, `Literal` for constants and closed
 request enumerations, `str` for response enumerations that grow, `MISSING`

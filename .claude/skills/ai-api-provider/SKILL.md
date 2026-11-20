@@ -14,8 +14,8 @@ work and the checks that make a provider complete.
 
 Adding a provider extends the closed `Provider` enum and the public surface:
 propose it (`change-proposal`) with what upstream offers (from its
-official OpenAPI file, SDK types and API reference), the auth scheme, error format and stream format, and
-which shared resources it will support. Code starts on the owner's go.
+official OpenAPI file, SDK types and API reference), the auth scheme, error
+format and stream format, and which shared resources it will support. Code starts on the owner's go.
 
 ## 1. Package skeleton (`src/aiollm/providers/<name>/`)
 
