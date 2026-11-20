@@ -212,7 +212,7 @@ serializable.
 from typing import Any
 
 from aiollm import GenerationResponse, InputItem, Turn, tool
-from aiollm.providers.openai import OpenAIClient
+from aiollm_openai import OpenAIClient
 
 
 @tool
@@ -256,7 +256,7 @@ the next generation call.
 from typing import Any
 
 from aiollm import CompletedEvent, InputItem, ToolResult, tool
-from aiollm.providers.openai import OpenAIClient
+from aiollm_openai import OpenAIClient
 
 
 @tool

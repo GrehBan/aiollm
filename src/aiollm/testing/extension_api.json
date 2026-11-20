@@ -129,8 +129,7 @@
   ],
   "aiollm.types.responses.generation": [
     "GenerationResponse",
-    "TokenUsage",
-    "ToolCall"
+    "TokenUsage"
   ],
   "aiollm.types.unknown": [
     "BaseUnknown",

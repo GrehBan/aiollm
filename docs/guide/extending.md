@@ -2,7 +2,7 @@
 
 ## Adding a provider
 
-A provider is a flat package under `providers/<name>/`, built from the same parts as `providers/openai/`:
+A provider is a package of its own, in its own repository and distribution, such as `aiollm_openai` ([aiollm-org/aiollm_openai](https://github.com/aiollm-org/aiollm_openai)) or the echo provider of the test kit, `aiollm.testing.echo`; it is built from these parts:
 
 1. **`api.py`**: its `IAPI`, usually `BaseAPI("https://api.provider.com", "v1")`, and `PROVIDER: Final = Provider("<name>")`, the one place the package names its provider. `Provider` is an open value, a `str` made from the name: the library itself declares only `Provider.GENERIC`, every provider package (in the library or outside it) its own, and two packages must not share a name, since files and errors tell providers apart by it. Compare providers with `==`, never with `is`: a `Provider` copied, pickled or read from a field is another object with the same value.
 2. **`resolver.py`**: a `BaseErrorResolver` subclass with `provider = PROVIDER`, the provider's `error_statuses` table (the status each in-band code or type stands for), and `get_error_code` or `classify_status` for its error codes, such as which 429s are quota errors and which statuses are transient.
@@ -24,7 +24,7 @@ A client's resources are not built in its own code, so a reader of the client se
 
 A provider package stands on a fixed set of names of the core, its extension API, listed by module in `aiollm/testing/extension_api.json`; a test fails when a provider imports a name outside it, and when a listed name is gone, and `aiollm.testing.extension.check_extension_api` runs the same check on a package of your own. These are the parts the steps above name: `Provider`, `BaseAPI` and the auth classes, `BaseErrorResolver` and the error classes it builds, `BaseAPIMethod`, `BaseStreamMethod` and the parsers, `SessionFactory` and `AiohttpSession` (imported from `aiollm.session.aiohttp`, the one place a provider binds its transport), `BaseProviderClient` and `bind_resource`, the base adapters and `Stop`, the checks an adapter runs on a shared request (`checked_options`, `merge_options`, `request_errors`, `check_conversation` and `check_files`, exported from `aiollm.adapters`), `GenerationResource` and `FilesResource`, and the shared request and response types. The core removes or changes a name of the list only as a breaking change, and a provider that needs a new one adds it to the list in the same change, so the contract grows in plain sight.
 
-The core never imports a provider, and the core's infrastructure (HTTP, methods, responses, sessions and clients) does not import the shared generation and files layer (`types.requests`, `types.responses`, adapters and resources); `tests/unit/test_layers.py` checks both.
+The core never imports a provider (the providers depend on the core, never the other way round), and the core's infrastructure (HTTP, methods, responses, sessions and clients) does not import the shared generation and files layer (`types.requests`, `types.responses`, adapters and resources); `tests/unit/test_layers.py` checks both.
 
 ### Testing a provider
 

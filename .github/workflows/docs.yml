@@ -3,6 +3,10 @@ name: docs
 on:
   push:
     branches: [master]
+  # Weekly too: the reference pages of the providers are built from
+  # their master, which moves without a push here.
+  schedule:
+    - cron: "0 7 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -24,7 +28,13 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --group docs --locked
-      - run: uv run mkdocs build --strict
+      # The providers, from their master and without their dependencies
+      # (which pin another core): the site documents them.
+      - run: >-
+          uv pip install --no-deps
+          "aiollm-openai @ git+https://github.com/aiollm-org/aiollm_openai@master"
+          "aiollm-anthropic @ git+https://github.com/aiollm-org/aiollm_anthropic@master"
+      - run: uv run --no-sync mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
       - uses: actions/upload-pages-artifact@v5

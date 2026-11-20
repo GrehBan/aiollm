@@ -45,11 +45,19 @@ the bug.
 
 ## Checks
 
+The examples and the providers' pages need both providers, installed from
+their `master` without their dependencies (they pin another core; the next
+`uv sync` removes them):
+
 ```bash
-uv run pytest tests/docs
-uv run rumdl check README.md CHANGELOG.md docs
-uv run mkdocs build --strict
+uv sync --all-groups
+uv pip install --no-deps "aiollm-openai @ git+https://github.com/aiollm-org/aiollm_openai@master" "aiollm-anthropic @ git+https://github.com/aiollm-org/aiollm_anthropic@master"
+uv run --no-sync pytest tests/docs
+uv run --no-sync rumdl check README.md CHANGELOG.md docs
+uv run --no-sync mkdocs build --strict
 ```
 
-The site is published from `master` by `.github/workflows/docs.yml`. Report
+A page about a provider's own methods follows that provider's code: read it
+in its repository. The site is published from `master` and every Monday by
+`.github/workflows/docs.yml`. Report
 in Russian: pages changed, examples added and their tests, checks run.

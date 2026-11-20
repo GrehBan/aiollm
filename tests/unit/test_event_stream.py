@@ -343,7 +343,9 @@ async def test_error_events_are_raised(item: Any) -> None:
 
 
 async def test_error_events_can_be_configured() -> None:
-    parser = StreamResponseParser(error_events=FieldValues("status", "error"))
+    matcher = FieldValues("status", "error")
+    parser = StreamResponseParser(error_events=matcher)
+    assert parser.error_events is matcher
     method = make_method(
         BaseStreamMethod[dict[str, Any]],
         __response_format__=ResponseFormat.NDJSON,

@@ -25,22 +25,24 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --all-groups --locked
-      - run: uv run ruff check src tests
-      - run: uv run ruff format --check src tests
-      - run: uv run mypy src
-      - run: uv run pyright
+      # The providers, from their master and without their dependencies
+      # (which pin another core): pyright reads tests/docs and the site
+      # documents them.
       - run: >-
-          uv run pytest --mypy -m mypy tests/typing
-          tests/providers/openai/typing tests/providers/anthropic/typing
-      - run: uv run rumdl check README.md CHANGELOG.md CONTRIBUTING.md docs
-      - run: uv run mkdocs build --strict
+          uv pip install --no-deps
+          "aiollm-openai @ git+https://github.com/aiollm-org/aiollm_openai@master"
+          "aiollm-anthropic @ git+https://github.com/aiollm-org/aiollm_anthropic@master"
+      - run: uv run --no-sync ruff check src tests
+      - run: uv run --no-sync ruff format --check src tests
+      - run: uv run --no-sync mypy src
+      - run: uv run --no-sync pyright
+      - run: uv run --no-sync pytest --mypy -m mypy tests/typing
+      - run: >-
+          uv run --no-sync rumdl check
+          README.md CHANGELOG.md CONTRIBUTING.md docs
+      - run: uv run --no-sync mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
-      # The provider types are what the pinned generator makes of the
-      # pinned specifications: regenerating them changes nothing.
-      - run: uv run python scripts/openai/generate_types.py
-      - run: uv run python scripts/anthropic/generate_types.py
-      - run: git add --intent-to-add . && git diff --exit-code
 
   test-matrix:
     name: tests (${{ matrix.os }}, ${{ matrix.python }})
@@ -62,8 +64,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
-      # The generator only runs in the job above.
-      - run: uv sync --all-groups --no-group codegen --locked
+      - run: uv sync --all-groups --locked
       - run: >-
           uv run pytest --cov --cov-branch --cov-report=xml
           --html=report.html --self-contained-html
@@ -98,16 +99,62 @@ jobs:
           .wheel-env/bin/python - <<'EOF'
           from importlib.metadata import version
 
-          import aiollm
-          import aiollm.providers.anthropic
-          import aiollm.providers.openai
+          import sys
 
-          assert aiollm.__version__ == version("aiollm"), (
+          import aiollm
+
+          assert aiollm.__version__ == version("aiollm-core"), (
               aiollm.__version__,
-              version("aiollm"),
+              version("aiollm-core"),
           )
-          print("aiollm", aiollm.__version__, "imports from its wheel")
+          # The core loads no transport and no provider on import.
+          loaded = [
+              name
+              for name in sys.modules
+              if name == "aiohttp" or name.startswith("aiollm_")
+          ]
+          assert loaded == [], loaded
+          print("aiollm-core", aiollm.__version__, "imports from its wheel")
           EOF
+
+  downstream:
+    # The providers on this core: each provider's own suite, with the
+    # core of this branch in place of its pin, then the core's examples
+    # of the site and the extension API check, with both providers
+    # installed. Required unless the pull request is a breaking change
+    # (a "**Breaking:**" fragment), which the providers follow in their
+    # own pull requests (CONTRIBUTING.md).
+    name: downstream (${{ matrix.provider }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [openai, anthropic]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: core
+      - uses: actions/checkout@v7
+        with:
+          repository: aiollm-org/aiollm_${{ matrix.provider }}
+          path: provider
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: The provider's tests on this core
+        working-directory: provider
+        run: |
+          uv sync --all-groups --no-group codegen --locked
+          # The pinned core goes, whatever its distribution name.
+          uv pip uninstall aiollm aiollm-core
+          uv pip install -e "../core[testing]"
+          uv run --no-sync pytest -q
+      - name: The core's examples and extension API with the providers
+        working-directory: core
+        run: |
+          uv sync --all-groups --locked
+          uv pip install --no-deps \
+            "aiollm-openai @ git+https://github.com/aiollm-org/aiollm_openai@master" \
+            "aiollm-anthropic @ git+https://github.com/aiollm-org/aiollm_anthropic@master"
+          uv run --no-sync pytest -q tests/docs tests/downstream
 
   changelog:
     # A pull request adds a fragment to CHANGES/ (or, for a release,

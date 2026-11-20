@@ -33,12 +33,12 @@ from aiollm import (
     ToolCall,
     Turn,
 )
-from aiollm.providers.anthropic import AnthropicClient
-from aiollm.providers.anthropic.client import (
+from aiollm_anthropic import AnthropicClient
+from aiollm_anthropic.client import (
     session_factory as anthropic_session_factory,
 )
-from aiollm.providers.openai import OpenAIClient
-from aiollm.providers.openai.client import session_factory
+from aiollm_openai import OpenAIClient
+from aiollm_openai.client import session_factory
 from aiollm.session.aiohttp import AiohttpSession
 from aiollm.types.base import BaseAPIType
 from aiollm.types.requests import GenerationRequest

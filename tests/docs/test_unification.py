@@ -18,22 +18,22 @@ from pydantic import BaseModel, ValidationError
 
 import aiollm
 from aiollm.enums import IncompleteReason, Role, ToolChoice
-from aiollm.providers.anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
-from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
+from aiollm_anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
+from aiollm_openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.exceptions import RequestValidationError
-from aiollm.providers.anthropic import AnthropicClient
-from aiollm.providers.anthropic.adapters import (
+from aiollm_anthropic import AnthropicClient
+from aiollm_anthropic.adapters import (
     AnthropicFilesAdapter,
     AnthropicGenerationAdapter,
 )
-from aiollm.providers.anthropic.types import Message
-from aiollm.providers.openai import OpenAIClient
-from aiollm.providers.openai.adapters import (
+from aiollm_anthropic.types import Message
+from aiollm_openai import OpenAIClient
+from aiollm_openai.adapters import (
     OpenAIFilesAdapter,
     OpenAIGenerationAdapter,
 )
-from aiollm.providers.openai.client import session_factory
-from aiollm.providers.openai.types import Response
+from aiollm_openai.client import session_factory
+from aiollm_openai.types import Response
 from aiollm.types.requests import (
     DocumentPart,
     FileUpload,

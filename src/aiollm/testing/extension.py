@@ -27,7 +27,7 @@ EXTENSION_API: Final[Mapping[str, Sequence[str]]] = json.loads(
 )
 """Every name of the extension API, by the module it is imported from."""
 
-PROVIDER_PREFIXES: Final = ("aiollm.providers.", "aiollm_")
+PROVIDER_PREFIXES: Final = ("aiollm_",)
 """Module prefixes of provider packages, which never import each other."""
 
 
