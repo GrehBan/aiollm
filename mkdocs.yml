@@ -112,8 +112,8 @@ nav:
       - resources: reference/resources.md
       - serialization: reference/serialization.md
       - testing: reference/testing.md
-      - providers.openai: reference/openai.md
-      - providers.anthropic: reference/anthropic.md
+      - aiollm_openai: reference/openai.md
+      - aiollm_anthropic: reference/anthropic.md
   - Shared field mapping: unification.md
   - Contributing: contributing.md
   - Changelog: changelog.md

@@ -49,3 +49,11 @@ def test_tool_names_both_providers_take(name: str) -> None:
     with pytest.raises(ValidationError, match="name"):
         Tool(name=name, parameters={"type": "object"})
     Tool(name="a" * 128, parameters={"type": "object"})
+
+
+def test_a_single_tool_becomes_a_list() -> None:
+    tool = Tool(name="lookup", parameters={"type": "object"})
+
+    request = GenerationRequest(model="model-1", input="Hi", tools=tool)
+
+    assert request.tools == [tool]

@@ -11,8 +11,8 @@ from datetime import datetime
 from pathlib import Path
 
 from aiollm import DocumentPart, IFilesClient, ProviderFile, TextPart, Turn
-from aiollm.providers.anthropic import AnthropicClient
-from aiollm.providers.openai import OpenAIClient
+from aiollm_anthropic import AnthropicClient
+from aiollm_openai import OpenAIClient
 
 
 async def ask_about(
@@ -57,15 +57,15 @@ async def files_before(
 ```python title="openai_files.py"
 from pathlib import Path
 
-from aiollm.providers.openai import OpenAIClient
-from aiollm.providers.openai.adapters import output_text
-from aiollm.providers.openai.methods import (
+from aiollm_openai import OpenAIClient
+from aiollm_openai.adapters import output_text
+from aiollm_openai.methods import (
     CreateFile,
     CreateResponse,
     DeleteFile,
     ListFiles,
 )
-from aiollm.providers.openai.methods.params import (
+from aiollm_openai.methods.params import (
     EasyInputMessage,
     FileExpirationAfter,
     InputFileContent,
@@ -120,16 +120,16 @@ async def all_file_ids(client: OpenAIClient) -> list[str]:
 ```python title="anthropic_files.py"
 from pathlib import Path
 
-from aiollm.providers.anthropic import AnthropicClient
-from aiollm.providers.anthropic.adapters import message_text
-from aiollm.providers.anthropic.methods import (
+from aiollm_anthropic import AnthropicClient
+from aiollm_anthropic.adapters import message_text
+from aiollm_anthropic.methods import (
     CreateFile,
     CreateMessage,
     DeleteFile,
     DownloadFile,
     ListFiles,
 )
-from aiollm.providers.anthropic.methods.params import (
+from aiollm_anthropic.methods.params import (
     DocumentBlockParam,
     FileDocumentSourceParam,
     TextBlockParam,
@@ -179,7 +179,7 @@ async def download(client: AnthropicClient, file_id: str, target: Path) -> int:
 - **Pages by cursor.** Pass `page.next_page` as `page` while it is not `None`. `ListFiles(ids=[...])` asks for up to 100 files by id in one page, sent as repeated `ids[]`; it cannot be combined with `page` or `limit`, and the id of a deleted or unknown file is left out, while an id that is not a valid file id fails the whole request with `BadRequestError` (`ids[]: invalid id`, checked live).
 - **Only files a tool made can be downloaded.** A file is `downloadable` when code execution or a skill created it; downloading any other raises `BadRequestError` with `code == "file_not_downloadable"`, and an expired file raises `NotFoundError`. `DownloadFile` returns a `Stream[bytes]`: `save(path)` writes it to a file without holding it in memory.
 - **The version is part of the method.** Every Files method sends `anthropic-version` (`VERSION_HEADERS`), like `CreateMessage`.
-- **Where the schemas come from.** Anthropic's documentation snapshot the library is generated from has no request schemas for Files, so they are a transcription of Anthropic's live API reference, kept with its URLs and the date it was read in `tests/providers/anthropic/contracts/sources/anthropic-files.openapi.json`.
+- **Where the schemas come from.** Anthropic's documentation snapshot the library is generated from has no request schemas for Files, so they are a transcription of Anthropic's live API reference, kept with its URLs and the date it was read in `tests/contracts/sources/anthropic-files.openapi.json` of [aiollm_anthropic](https://github.com/aiollm-org/aiollm_anthropic).
 
 ## On both providers
 

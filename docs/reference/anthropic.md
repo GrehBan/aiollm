@@ -1,11 +1,11 @@
-# aiollm.providers.anthropic
+# aiollm_anthropic
 
-::: aiollm.providers.anthropic
+::: aiollm_anthropic
 
-::: aiollm.providers.anthropic.methods
+::: aiollm_anthropic.methods
 
-::: aiollm.providers.anthropic.methods.params
+::: aiollm_anthropic.methods.params
 
-::: aiollm.providers.anthropic.adapters
+::: aiollm_anthropic.adapters
 
-::: aiollm.providers.anthropic.types
+::: aiollm_anthropic.types

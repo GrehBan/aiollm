@@ -2,47 +2,27 @@
 
 ``aiollm/testing/extension_api.json`` lists, by module, every name a
 provider package imports from ``aiollm``. A provider that takes a name
-outside it fails here (and, once it lives in its own repository, in its
-own ``check_extension_api`` test), so a new name is added to the
-snapshot in the same change and shows in its diff; the core removes or
-changes a listed name only with a **Breaking** changelog fragment, since
-the provider packages stand on them. Provider packages do not import
-each other. The echo provider of the test kit is held to it too.
+outside it fails its own ``check_extension_api`` test, so a new name is
+added to the snapshot in the same change and shows in its diff; the core
+removes or changes a listed name only with a **Breaking** changelog
+fragment, since the provider packages stand on them. Provider packages
+do not import each other. The echo provider of the test kit is held to
+it here; the providers of their own repositories, and the rule that the
+snapshot lists nothing they do not take, in ``tests/downstream``.
 """
 
 from __future__ import annotations
 
-import ast
 import importlib
 from pathlib import Path
 
 import pytest
 
-import aiollm
 from aiollm.testing.extension import (
     EXTENSION_API,
     check_extension_api,
     outside_names,
 )
-
-ROOT = Path(aiollm.__file__).parent
-
-PROVIDERS = (
-    "aiollm.providers.anthropic",
-    "aiollm.providers.openai",
-    "aiollm.testing.echo",
-)
-"""Every provider package of this repository."""
-
-
-def test_every_provider_package_is_checked() -> None:
-    found = {
-        f"aiollm.providers.{package.name}"
-        for package in (ROOT / "providers").iterdir()
-        if (package / "__init__.py").exists()
-    }
-
-    assert found | {"aiollm.testing.echo"} == set(PROVIDERS)
 
 
 def test_the_snapshot_is_sorted() -> None:
@@ -59,32 +39,8 @@ def test_every_listed_name_exists(module: str) -> None:
     assert [n for n in EXTENSION_API[module] if not hasattr(imported, n)] == []
 
 
-@pytest.mark.parametrize("package", PROVIDERS)
-def test_providers_take_only_the_extension_api(package: str) -> None:
-    assert check_extension_api(package) == []
-
-
-def test_the_snapshot_lists_only_what_providers_take() -> None:
-    # A name nobody takes is not part of the contract yet.
-    taken = {
-        (node.module, alias.name)
-        for package in PROVIDERS
-        for path in sorted(
-            Path(importlib.import_module(package).__file__ or "").parent.rglob(
-                "*.py"
-            )
-        )
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.ImportFrom) and node.module
-        for alias in node.names
-    }
-    listed = {
-        (module, name)
-        for module, names in EXTENSION_API.items()
-        for name in names
-    }
-
-    assert listed - taken == set()
+def test_the_echo_provider_takes_only_the_extension_api() -> None:
+    assert check_extension_api("aiollm.testing.echo") == []
 
 
 CASES = {

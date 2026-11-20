@@ -57,6 +57,7 @@ from aiollm.types.requests.generation import (
     GenerationRequest,
     InputItem,
     NativeOutput,
+    ToolCall,
     ToolCallTurn,
     ToolResult,
     Turn,
@@ -73,7 +74,6 @@ from aiollm.types.responses.events import (
 from aiollm.types.responses.generation import (
     GenerationResponse,
     TokenUsage,
-    ToolCall,
 )
 
 FINISHED: Final = frozenset({"end", "tool_calls"})

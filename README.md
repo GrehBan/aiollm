@@ -20,7 +20,7 @@ You describe each API call as a small declarative class: a Pydantic model whose 
 - **File uploads.** From bytes, a path, an open binary stream or an async iterator; a retry resends the whole file.
 - **Opt-in retries.** Transient failures are retried with exponential backoff and jitter, honouring `Retry-After` up to a cap; a `RetryPolicy` tunes them per session or per call.
 - **Structured errors.** One exception class per common HTTP status, plus transport and response errors, each with the provider's code, the request id and a `transient` flag.
-- **Provider clients.** `OpenAIClient` (Responses and Files APIs) and `AnthropicClient` (Messages and Files APIs), with types generated from the providers' schemas and the provider-neutral `client.generation` (text with images and PDF documents, structured output, reasoning summaries and function tools, buffered or streamed) and `client.files` (a file uploaded once and sent by its id).
+- **Provider clients.** `OpenAIClient` (Responses and Files APIs, package [`aiollm-openai`](https://github.com/aiollm-org/aiollm_openai)) and `AnthropicClient` (Messages and Files APIs, package [`aiollm-anthropic`](https://github.com/aiollm-org/aiollm_anthropic)), with types generated from the providers' schemas and the provider-neutral `client.generation` (text with images and PDF documents, structured output, reasoning summaries and function tools, buffered or streamed) and `client.files` (a file uploaded once and sent by its id).
 - **Replaceable parts.** Sessions depend on protocols, so the API, authentication, error mapping, headers and JSON codec can each be swapped.
 - **Safe defaults.** Path parameters are escaped, redirects are off, proxies from the environment are ignored, and tokens stay out of `repr`.
 
@@ -35,6 +35,8 @@ uv sync
 ```
 
 Or with pip: `pip install -e .`
+
+The provider clients are packages of their own, installed the same way from their repositories: [aiollm-openai](https://github.com/aiollm-org/aiollm_openai) (`import aiollm_openai`) and [aiollm-anthropic](https://github.com/aiollm-org/aiollm_anthropic) (`import aiollm_anthropic`).
 
 ## Quick start
 

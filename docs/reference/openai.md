@@ -1,11 +1,11 @@
-# aiollm.providers.openai
+# aiollm_openai
 
-::: aiollm.providers.openai
+::: aiollm_openai
 
-::: aiollm.providers.openai.methods
+::: aiollm_openai.methods
 
-::: aiollm.providers.openai.methods.params
+::: aiollm_openai.methods.params
 
-::: aiollm.providers.openai.adapters
+::: aiollm_openai.adapters
 
-::: aiollm.providers.openai.types
+::: aiollm_openai.types

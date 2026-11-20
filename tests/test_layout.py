@@ -1,10 +1,11 @@
-"""The repository is laid out as the three repositories it will become.
+"""The core holds no provider.
 
-Each provider's tests are ``tests/providers/<name>/`` and its scripts
-``scripts/<name>/``: they import nothing of another provider, and the
-core's tests import no provider's tests and, but for the examples of the
-docs, no provider at all. So each folder moves out with its history
-alone.
+The providers live in their own repositories (``aiollm_openai``,
+``aiollm_anthropic``) and stand on the extension API. The core's own
+suite runs without them: only ``tests/docs`` (the examples of the site)
+and ``tests/downstream`` (the providers against the extension API)
+import a provider, and they run in the ``downstream`` job, where the
+providers are installed.
 """
 
 from __future__ import annotations
@@ -13,10 +14,9 @@ import ast
 from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[1]
-PROVIDERS = ("anthropic", "openai")
+WITH_PROVIDERS = (ROOT / "tests" / "docs", ROOT / "tests" / "downstream")
+"""The folders that run with the providers installed."""
 
 
 def imported(path: Path) -> Iterator[str]:
@@ -33,57 +33,23 @@ def imported(path: Path) -> Iterator[str]:
             yield node.module
 
 
-def test_the_providers_are_the_folders() -> None:
-    folders = {
-        path.name
-        for path in (ROOT / "tests" / "providers").iterdir()
-        if (path / "__init__.py").exists()
-    }
-
-    assert folders == set(PROVIDERS)
-    scripts = {
-        path.name
-        for path in (ROOT / "scripts").iterdir()
-        if path.is_dir() and not path.name.startswith(("_", "."))
-    }
-    assert scripts == set(PROVIDERS)
+def test_there_is_no_provider_in_the_core() -> None:
+    for folder in (ROOT / "src" / "aiollm", ROOT / "tests"):
+        assert list((folder / "providers").rglob("*.py")) == []
 
 
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_a_provider_takes_nothing_of_another(provider: str) -> None:
-    own = (f"tests.providers.{provider}", f"aiollm.providers.{provider}")
-    files = [
-        *(ROOT / "tests" / "providers" / provider).rglob("*.py"),
-        *(ROOT / "scripts" / provider).rglob("*.py"),
-    ]
-
-    found = [
-        f"{path.relative_to(ROOT).as_posix()}: {module}"
-        for path in files
-        for module in imported(path)
-        if module.startswith(("tests", "aiollm.providers"))
-        and not module.startswith(own)
-    ]
-
-    assert found == []
-
-
-def test_the_core_takes_no_provider() -> None:
+def test_the_core_suite_takes_no_provider() -> None:
     files = [
         path
         for path in (ROOT / "tests").rglob("*.py")
-        if not path.is_relative_to(ROOT / "tests" / "providers")
+        if not any(path.is_relative_to(folder) for folder in WITH_PROVIDERS)
     ]
 
     found = [
         f"{path.relative_to(ROOT).as_posix()}: {module}"
         for path in files
         for module in imported(path)
-        if module.startswith("tests.providers")
-        or (
-            module.startswith("aiollm.providers")
-            and not path.is_relative_to(ROOT / "tests" / "docs")
-        )
+        if module.startswith(("aiollm_", "aiollm.providers"))
     ]
 
     assert found == []

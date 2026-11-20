@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping with aiollm. The library is pre-alpha: the public API can still change, and every change is welcome, from a typo to a new provider. For anything larger than a fix, open an issue first and describe the change, so that we agree on the design before you spend time on code.
+Thank you for helping with aiollm. The library is pre-alpha: the public API can still change, and every change is welcome, from a typo to a new provider. This repository is the core, published as `aiollm-core`; the providers are packages of their own, [aiollm-openai](https://github.com/aiollm-org/aiollm_openai) and [aiollm-anthropic](https://github.com/aiollm-org/aiollm_anthropic), each with its own contributing guide. A change of a provider's endpoints, types or adapters goes to its repository. For anything larger than a fix, open an issue first and describe the change, so that we agree on the design before you spend time on code.
 
 The guide below walks through one change from start to finish. The rules it refers to are written down in [`CLAUDE.md`](https://github.com/aiollm-org/aiollm/blob/master/CLAUDE.md), the project's profile: commands, architecture invariants and conventions. It is written for AI assistants, and it is the most complete description of the code base for people too.
 
@@ -57,12 +57,11 @@ src/aiollm/
 ├── client/             BaseClient, BaseProviderClient
 ├── adapters/           adapters between shared types and provider methods
 ├── resources/          GenerationResource, use cases and AdapterUseCase orchestrators
-└── providers/
-    ├── anthropic/      AnthropicClient, the Messages and Files APIs: methods/, types/, adapters/
-    └── openai/         OpenAIClient, the Responses and Files APIs: methods/, types/, adapters/
+└── testing/            the test kit: Recorder, fixtures, the shared scenarios,
+                        the echo provider and the extension API
 ```
 
-The packages are layers, listed from the bottom up; a module imports only from the layers below it. The core never imports a provider, its infrastructure never imports the shared generation and files layer, and a provider takes from the core only the names of its extension API (`aiollm/testing/extension_api.json`, see [Extending](https://aiollm-org.github.io/aiollm/guide/extending/)). Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/<provider>/` (each provider against the shared scenarios of `aiollm.testing.contract` and its upstream schemas, laid out as its own repository will be, with its `contracts/`, `typing/` and `public_api.json`; the scripts are `scripts/<provider>/`), `tests/testing/` (the test kit, and the same scenarios on its echo provider), `tests/typing/` (static checks of the public API, on the echo provider) and `tests/docs/` (the examples of these pages, with their own provider payloads).
+The packages are layers, listed from the bottom up; a module imports only from the layers below it. The core never imports a provider (`aiollm_*`), its infrastructure never imports the shared generation and files layer, and a provider takes from the core only the names of its extension API (`aiollm/testing/extension_api.json`, see [Extending](https://aiollm-org.github.io/aiollm/guide/extending/)). Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/testing/` (the test kit, and the shared scenarios of `aiollm.testing.contract` on its echo provider), `tests/typing/` (static checks of the public API, on the echo provider), and the two folders that need the providers installed: `tests/docs/` (the examples of these pages, with their own provider payloads) and `tests/downstream/` (the providers against the extension API).
 
 ## Making changes in code
 
@@ -72,10 +71,10 @@ At this point you can make any changes in the code that you want: fixes, new fea
 - **Modern Python, the oldest supported version.** Every module starts with `from __future__ import annotations`; use PEP 695 generics (`class Stream[T]`) and nothing newer than Python 3.13 allows.
 - **Public names are exported on purpose.** A name users need goes into its package's `__init__.py` with a sorted `__all__`; everything else stays internal.
 - **Fail early.** A mistake in a method class raises `TypeError` when the class is defined, a bad value raises before anything is sent, and nothing is dropped silently.
-- **Generated code is regenerated, not edited.** A provider's `types/<family>.py` and `methods/params/` come from [aiollm-codegen](https://github.com/aiollm-org/aiollm_codegen) through `uv run python scripts/<provider>/generate_types.py` (`openai` or `anthropic`). The generator (the `codegen` dependency group) and OpenAI's OpenAPI file (a URL and a SHA-256 in the script) are pinned, and CI fails when a regeneration changes any file; fix a defect in aiollm-codegen and move the pin.
+- **The providers stand on the core.** A name a provider imports is in the extension API (`aiollm/testing/extension_api.json`); a new one is added there in the same change, and a listed one is removed or changed only as a breaking change. CI runs both providers' suites on your branch (`downstream`).
 - **Breaking changes are allowed before 1.0, but marked.** Say so in the changelog fragment (see [Describe changes](#describe-changes)); see [Versioning](https://aiollm-org.github.io/aiollm/guide/design/#versioning) for what counts as one.
 
-For a new endpoint or a new provider, read [Extending](https://aiollm-org.github.io/aiollm/guide/extending/): provider methods follow the provider's own JSON schema field by field, and the wire-contract tests check that they do.
+For a new provider, read [Extending](https://aiollm-org.github.io/aiollm/guide/extending/): a provider is a package of its own, its methods follow the provider's own JSON schema field by field, and its wire-contract tests check that they do. A new endpoint of OpenAI or Anthropic goes to that provider's repository.
 
 ## Format the code (code-style)
 
@@ -120,29 +119,36 @@ All changes should be tested. A new behaviour gets a test of what a caller sees 
 Using traditional approach:
 
 ```bash
-pytest tests
+pytest
 pytest --cov                        # with branch coverage
-pytest --mypy -m mypy tests/typing tests/providers/*/typing  # static checks of the public API
+pytest --mypy -m mypy tests/typing  # static checks of the public API
 ```
 
 Or with uv:
 
 ```bash
-uv run pytest tests
+uv run pytest
 uv run pytest --cov
-uv run pytest --mypy -m mypy tests/typing tests/providers/openai/typing tests/providers/anthropic/typing
+uv run pytest --mypy -m mypy tests/typing
+```
+
+`tests/docs`, `tests/downstream` and the docs site need both providers. They pin another core, so install them from their `master` without their dependencies (the next `uv sync` removes them):
+
+```bash
+uv pip install --no-deps "aiollm-openai @ git+https://github.com/aiollm-org/aiollm_openai@master" "aiollm-anthropic @ git+https://github.com/aiollm-org/aiollm_anthropic@master"
+uv run --no-sync pytest tests/docs tests/downstream
 ```
 
 What the tests expect from a change:
 
-- **Coverage stays at 100 %** of lines and branches in practice (the configured floor is 98 %).
+- **Coverage stays at 100 %** of lines and branches in practice (the configured floor is 98 %); a branch only a provider reaches is covered by the providers' suites in `downstream`.
 - **No real API.** Network tests run against the local `Recorder` server of `aiollm.testing` (its fixtures come from the `aiollm.testing.plugin` that `tests/conftest.py` loads), which answers only what a test scripted and fails the test on any other request, so a hidden retry cannot pass. API keys from your environment are cleared for every test.
 - **No sleeps.** Wait for an event or a condition, not for time to pass.
 - **Every supported Python.** CI runs the tests on CPython 3.13, 3.14 and 3.15, on Linux and Windows. To try another version locally with uv, run `UV_PYTHON=3.15 uv run --all-groups pytest` (it rebuilds `.venv` for that version; run `uv sync --all-groups` to go back).
 
 ## Docs
 
-We are using [MkDocs](https://www.mkdocs.org/) with the Material theme to render the docs; all sources are in the `docs` directory, and the reference pages are generated from the docstrings. You can change the sources, start the live-preview server and look at what you are doing at <http://127.0.0.1:8000>.
+We are using [MkDocs](https://www.mkdocs.org/) with the Material theme to render the docs; all sources are in the `docs` directory, and the reference pages are generated from the docstrings. You can change the sources, start the live-preview server and look at what you are doing at <http://127.0.0.1:8000>. The providers' pages need them installed (see [Run tests](#run-tests)).
 
 Using traditional approach:
 
@@ -203,12 +209,13 @@ CI runs on every pull request, and a pull request is merged only when all of the
 |---|---|
 | `lint and types` | ruff, mypy, pyright, the typing tests, the Markdown lint and the strict docs build |
 | `tests` | pytest with coverage on Linux and Windows, CPython 3.13, 3.14 and 3.15 |
-| `package` | builds the wheel and imports it in a clean environment |
+| `package` | builds the wheel and imports it in a clean environment, without aiohttp or a provider |
+| `downstream (openai)`, `downstream (anthropic)` | each provider's suite on your branch, then the examples of the site and the extension API with both providers |
 | `audit` | known vulnerabilities in the locked dependencies (`uv audit`) |
 | `changelog` | a changelog fragment, unless the PR has the `no changelog` label |
 | GitGuardian | no secrets in the diff |
 
-Then wait for a review of these changes. Releases, version numbers and tags are made by the maintainer.
+`downstream` may fail on a breaking change, which the providers then follow in their own pull requests: say so in the description. Then wait for a review of these changes. Releases, version numbers and tags are made by the maintainer.
 
 ## Contributing with Claude
 
@@ -217,13 +224,12 @@ Many changes to this library are written with [Claude Code](https://claude.com/c
 ### What the repository gives Claude
 
 - **[`CLAUDE.md`](https://github.com/aiollm-org/aiollm/blob/master/CLAUDE.md)** is loaded into every session: the commands, the invariants that are easy to break and the conventions. If your change alters an invariant or a convention, update `CLAUDE.md` in the same pull request; a stale profile misleads the next session.
-- **Project skills** in `.claude/skills/` carry the project's workflows, and Claude picks them up when a task matches; you can also call one by name, such as `/ai-api-endpoint`. They are listed in the table below.
-- **Provider documentation.** Point Claude at the providers' official sources: OpenAI's OpenAPI file (`openai/openai-openapi`), Anthropic's SDK types and API reference. Each provider's schema snapshot in `tests/providers/<provider>/contracts/` is rebuilt from the pinned ones by the `update.py` beside it; a weekly workflow (`upstream.yml`, `scripts/<provider>/refresh_upstream.py`) opens a pull request when a source moves ahead of its pin.
+- **Project skills** in `.claude/skills/` carry the project's workflows, and Claude picks them up when a task matches; you can also call one by name, such as `/ai-api-docs`. They are listed in the table below.
+- **Provider documentation.** Point Claude at the providers' official sources: OpenAI's OpenAPI file (`openai/openai-openapi`), Anthropic's SDK types and API reference. The schema snapshots, the code generation and the weekly upstream refresh live in the provider repositories.
 
 | Skill | Use it for |
 |---|---|
-| `ai-api-endpoint` | a new endpoint or field of an existing provider, from the upstream schema to the wire contracts |
-| `ai-api-provider` | a new provider package |
+| `ai-api-provider` | a new provider package in its own repository |
 | `ai-api-docs` | guide pages, docstrings and tested examples |
 | `ai-api-release` | the changelog fragment of a change (and, for the maintainer, releases) |
 

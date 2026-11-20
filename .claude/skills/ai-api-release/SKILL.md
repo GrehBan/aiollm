@@ -71,7 +71,8 @@ keeps line endings.
 
 The full gate from `CLAUDE.md` (ruff check and format, mypy, pyright,
 typing tests, pytest with coverage at 100 %, rumdl, `mkdocs build
---strict`, `uv audit`). All green before the commit. The release changes
+--strict`, `uv audit`, and `tests/docs` with `tests/downstream` on both
+providers). All green before the commit. The release changes
 `CHANGELOG.md`, so `towncrier check` passes without a fragment.
 
 ### 4. Commit and PR - only on the owner's word
@@ -79,7 +80,9 @@ typing tests, pytest with coverage at 100 %, rumdl, `mkdocs build
 - Commit title: `Release X.Y.Z`; the body lists the headline changes.
 - Push and open the PR only when the owner says so. Do not enable
   auto-merge, do not merge, do not poll CI.
-- Never create or push a tag. After the merge, if asked, give the owner:
+- Never create or push a tag: a tag `vX.Y.Z` publishes `aiollm-core` to
+  PyPI (`.github/workflows/publish.yml`). After the merge, if asked, give the
+  owner:
   `git tag -a vX.Y.Z <merge-commit> -m "Release X.Y.Z"` and
   `git push origin vX.Y.Z`.
 

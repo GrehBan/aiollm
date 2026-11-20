@@ -1,15 +1,15 @@
 """Packages import only from the layers below them (CLAUDE.md).
 
 The order is core → data and HTTP primitives → methods → response →
-session → client → adapters → resources → providers → testing. The
-exceptions are the ones ``CLAUDE.md`` names: ``methods/base.py``
-imports the default parsers, and protocols that refer to each other
-import under ``TYPE_CHECKING``. Transport modules are never imported from an
-``__init__.py``, except a provider package's. The core imports no
-provider package, and its infrastructure (everything but the shared
-generation and files layer, the providers and the test kit, which runs
-the shared scenarios) does not import that shared layer, so the two
-could be split apart.
+session → client → adapters → resources → testing. The exceptions are
+the ones ``CLAUDE.md`` names: ``methods/base.py`` imports the default
+parsers, and protocols that refer to each other import under
+``TYPE_CHECKING``. Transport modules are never imported from an
+``__init__.py``. The core imports no provider package (they live in
+their own repositories), and its infrastructure (everything but the
+shared generation and files layer and the test kit, which runs the
+shared scenarios) does not import that shared layer, so the two could
+be split apart.
 """
 
 from __future__ import annotations
@@ -37,8 +37,7 @@ LAYERS = {
     "client": 5,
     "adapters": 6,
     "resources": 7,
-    "providers": 8,
-    "testing": 9,
+    "testing": 8,
 }
 """The layer of each top-level package or module of ``aiollm``."""
 
@@ -125,7 +124,6 @@ def transport_imports(found: list[Import]) -> list[str]:
         f"{item.module}:{item.line} imports {item.target}"
         for item in found
         if item.module.endswith("__init__.py")
-        and not item.module.startswith("providers/")
         and item.target.split(".")[-1] in TRANSPORTS
     ]
 
@@ -144,7 +142,7 @@ def shared_layer_imports(found: list[Import]) -> list[str]:
     return [
         f"{item.module}:{item.line} imports {item.target}"
         for item in found
-        if not in_package(item.module, (*SHARED, "providers", "testing"))
+        if not in_package(item.module, (*SHARED, "testing"))
         and in_package(item.target, SHARED)
     ]
 
@@ -209,7 +207,6 @@ def test_the_core_imports_no_provider() -> None:
     found = [
         problem
         for path in sorted(ROOT.rglob("*.py"))
-        if not path.relative_to(ROOT).as_posix().startswith("providers/")
         for problem in provider_imports(
             path.relative_to(ROOT).as_posix(),
             path.read_text(encoding="utf-8"),
@@ -291,11 +288,6 @@ SHARED_CASES = {
         "from aiollm.types.requests import X",
         [],
     ),
-    "provider-imports-shared": (
-        "providers/openai/client.py",
-        "from aiollm.resources.files import X",
-        [],
-    ),
 }
 """Sources the shared-layer check is tried on, and what it must report."""
 
@@ -332,9 +324,7 @@ def test_the_check_finds_a_provider_import(
 def test_the_check_finds_a_transport_in_an_init() -> None:
     source = "from aiollm.session.aiohttp import X"
     found = imports("session/__init__.py", source)
-    provider = imports("providers/openai/__init__.py", source)
 
     assert transport_imports(found) == [
         "session/__init__.py:1 imports session.aiohttp"
     ]
-    assert transport_imports(provider) == []
