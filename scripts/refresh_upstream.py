@@ -1,0 +1,392 @@
+"""Follow the pinned upstream schema sources and refresh what they make.
+
+Run from the aiollm checkout (``.github/workflows/upstream.yml`` runs it
+every week):
+
+    uv run python scripts/refresh_upstream.py --out DIR
+
+It compares each pin with its source:
+
+- OpenAI: the newest commit of ``openai/openai-openapi`` that changed
+  ``openapi.yaml``, against the commit of ``OPENAI_OPENAPI_URL`` in
+  ``scripts/generate_provider_types.py``;
+- Anthropic: the newest ``anthropic`` release on PyPI, against the pin
+  of the ``upstream`` dependency group;
+- Anthropic's Files API: the Markdown of the API reference pages its
+  transcription follows, against the hashes in
+  ``tests/providers/contracts/sources/anthropic-files.pages.json``.
+
+A pin that is behind is moved (OpenAI's URL and SHA-256; Anthropic's pin,
+``uv.lock`` and ``ANTHROPIC_VERSION`` from the new SDK), then the contract
+snapshot is rebuilt and the provider types regenerated, so the working
+tree holds the whole change for a pull request; ``DIR/pull-request.md``
+describes it. A changed page is not followed automatically, since the
+transcription is written by hand: it is listed in ``DIR/issue.md`` for
+someone to compare with the transcription, who then runs this script
+with ``--update-pages``. Under GitHub Actions
+the outputs ``pins`` and ``pages`` say whether each file was written.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Final
+
+ROOT: Final = Path(__file__).resolve().parents[1]
+SCRIPT: Final = ROOT / "scripts" / "generate_provider_types.py"
+PYPROJECT: Final = ROOT / "pyproject.toml"
+SOURCES: Final = ROOT / "tests" / "providers" / "contracts" / "sources"
+FILES_SPEC: Final = SOURCES / "anthropic-files.openapi.json"
+PAGES: Final = SOURCES / "anthropic-files.pages.json"
+
+OPENAI_REPOSITORY: Final = "openai/openai-openapi"
+"""Repository of OpenAI's OpenAPI file."""
+
+OPENAI_COMMIT: Final = re.compile(r'"([0-9a-f]{40})/openapi\.yaml"')
+"""The commit in ``OPENAI_OPENAPI_URL``."""
+
+OPENAI_DATE: Final = re.compile(r"at the commit of (\d{4}-\d{2}-\d{2})")
+"""The date in the docstring of ``OPENAI_OPENAPI_URL``."""
+
+OPENAI_SHA256: Final = re.compile(
+    r'(OPENAI_OPENAPI_SHA256: Final = \(\n\s*")([0-9a-f]{64})"'
+)
+"""The hash in ``OPENAI_OPENAPI_SHA256``."""
+
+ANTHROPIC_PIN: Final = re.compile(r'"anthropic==([^"]+)"')
+"""The pin of the ``upstream`` dependency group."""
+
+ANTHROPIC_VERSION: Final = re.compile(
+    r'(ANTHROPIC_VERSION: Final = ")([^"]+)"'
+)
+"""The API version the Anthropic types are generated for."""
+
+
+@dataclass(frozen=True)
+class Change:
+    """A source that moved.
+
+    Attributes:
+        source: What moved, as the report names it.
+        old: The pinned value.
+        new: The upstream value.
+        link: Where to read the difference.
+    """
+
+    source: str
+    old: str
+    new: str
+    link: str
+
+
+def fetch(url: str) -> bytes:
+    """Download a URL.
+
+    ``GH_TOKEN`` is sent to the GitHub API when set, for its rate limit.
+
+    Args:
+        url: The URL.
+
+    Returns:
+        The body.
+    """
+    request = urllib.request.Request(  # noqa: S310
+        url, headers={"User-Agent": "aiollm-upstream-check"}
+    )
+    token = os.environ.get("GH_TOKEN")
+    if token and url.startswith("https://api.github.com/"):
+        request.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
+        body: bytes = response.read()
+    return body
+
+
+def fetch_json(url: str) -> Any:
+    """Download and decode a JSON document.
+
+    Args:
+        url: The URL.
+
+    Returns:
+        The decoded value.
+    """
+    return json.loads(fetch(url))
+
+
+def run(*command: str, **env: str) -> str:
+    """Run a command in the checkout.
+
+    Args:
+        *command: The command and its arguments.
+        **env: Variables added to the environment.
+
+    Returns:
+        Its standard output.
+    """
+    result = subprocess.run(  # noqa: S603
+        command,
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **env},
+    )
+    return result.stdout
+
+
+def follow_openai(openapi: Path) -> Change | None:
+    """Move OpenAI's pin to the newest commit of its file.
+
+    Args:
+        openapi: Where to write the pinned file, new or not.
+
+    Returns:
+        The change, or ``None`` when the pin is current.
+    """
+    script = SCRIPT.read_text(encoding="utf-8")
+    match = OPENAI_COMMIT.search(script)
+    assert match is not None
+    old = match.group(1)
+    commits = fetch_json(
+        f"https://api.github.com/repos/{OPENAI_REPOSITORY}/commits"
+        "?path=openapi.yaml&per_page=1"
+    )
+    new: str = commits[0]["sha"]
+    raw = f"https://raw.githubusercontent.com/{OPENAI_REPOSITORY}"
+    openapi.write_bytes(fetch(f"{raw}/{new}/openapi.yaml"))
+    if new == old:
+        return None
+    date = commits[0]["commit"]["committer"]["date"][:10]
+    digest = hashlib.sha256(openapi.read_bytes()).hexdigest()
+    script = OPENAI_COMMIT.sub(f'"{new}/openapi.yaml"', script)
+    script = OPENAI_DATE.sub(f"at the commit of {date}", script)
+    script = OPENAI_SHA256.sub(rf'\g<1>{digest}"', script)
+    SCRIPT.write_text(script, encoding="utf-8", newline="\n")
+    return Change(
+        source=f"OpenAI `openapi.yaml` ({OPENAI_REPOSITORY})",
+        old=old[:7],
+        new=f"{new[:7]} ({date})",
+        link=f"https://github.com/{OPENAI_REPOSITORY}/compare/{old}...{new}",
+    )
+
+
+def follow_anthropic() -> Change | None:
+    """Move the Anthropic SDK pin to its newest release.
+
+    Returns:
+        The change, or ``None`` when the pin is current.
+    """
+    pyproject = PYPROJECT.read_text(encoding="utf-8")
+    match = ANTHROPIC_PIN.search(pyproject)
+    assert match is not None
+    old = match.group(1)
+    new: str = fetch_json("https://pypi.org/pypi/anthropic/json")["info"][
+        "version"
+    ]
+    if new == old:
+        return None
+    pyproject = ANTHROPIC_PIN.sub(f'"anthropic=={new}"', pyproject)
+    PYPROJECT.write_text(pyproject, encoding="utf-8", newline="\n")
+    run("uv", "lock")
+    api_version = run(
+        "uv",
+        "run",
+        "--group",
+        "upstream",
+        "python",
+        "-c",
+        "import anthropic._constants as c; print(c.ANTHROPIC_API_VERSION)",
+    ).strip()
+    script = SCRIPT.read_text(encoding="utf-8")
+    script = ANTHROPIC_VERSION.sub(rf'\g<1>{api_version}"', script)
+    SCRIPT.write_text(script, encoding="utf-8", newline="\n")
+    return Change(
+        source="Anthropic SDK (`anthropic` on PyPI)",
+        old=old,
+        new=f"{new} (API version {api_version})",
+        link=(
+            "https://github.com/anthropics/anthropic-sdk-python/compare/"
+            f"v{old}...v{new}"
+        ),
+    )
+
+
+def page_hashes() -> dict[str, str]:
+    """Hash the Markdown of every page the Files transcription follows.
+
+    Returns:
+        The SHA-256 of each page, by its URL.
+    """
+    spec = json.loads(FILES_SPEC.read_text(encoding="utf-8"))
+    return {
+        url: hashlib.sha256(fetch(f"{url}.md")).hexdigest()
+        for url in spec["info"]["x-sources"]
+    }
+
+
+def changed_pages(hashes: dict[str, str]) -> list[Change]:
+    """Compare the pages with the hashes kept beside the transcription.
+
+    Args:
+        hashes: The current hashes, by URL.
+
+    Returns:
+        One change per page whose Markdown differs or is new.
+    """
+    kept: dict[str, str] = json.loads(PAGES.read_text(encoding="utf-8"))
+    return [
+        Change(
+            source="Anthropic Files reference page",
+            old=kept.get(url, "none")[:12],
+            new=digest[:12],
+            link=url,
+        )
+        for url, digest in hashes.items()
+        if kept.get(url) != digest
+    ]
+
+
+def table(changes: list[Change]) -> str:
+    """Write changes as a Markdown table.
+
+    Args:
+        changes: The changes.
+
+    Returns:
+        The table.
+    """
+    rows = [
+        "| Source | Pinned | Upstream | Difference |",
+        "|---|---|---|---|",
+        *(
+            f"| {c.source} | {c.old} | {c.new} | [link]({c.link}) |"
+            for c in changes
+        ),
+    ]
+    return "\n".join(rows) + "\n"
+
+
+PULL_REQUEST: Final = """\
+The weekly check of the pinned schema sources found new versions. This
+pull request moves the pins, rebuilds the contract snapshot
+(`tests/providers/contracts/`) and regenerates the provider types.
+
+{table}
+Before merging, read the diff of the snapshot and of `src/aiollm/providers`:
+
+- a field, type or event that was removed or narrowed is a breaking
+  change: add a `**Breaking:**` fragment to `CHANGES/`;
+- a new field or event is an `added` fragment, if users can reach it;
+- an example listed under `rejected` in `manifest.json` fails the tests
+  until it is fixed or removed by hand.
+
+Opened by `.github/workflows/upstream.yml`
+(`scripts/refresh_upstream.py`).
+"""
+
+ISSUE: Final = """\
+The weekly check found changes in the API reference pages that
+`tests/providers/contracts/sources/anthropic-files.openapi.json`
+transcribes. Compare each page with the transcription, update it where
+the API changed, then run
+`uv run python scripts/refresh_upstream.py --update-pages` and commit
+the new hashes.
+
+{table}"""
+
+
+def output(name: str, value: str) -> None:
+    """Set an output of the GitHub Actions step, when there is one.
+
+    Args:
+        name: The output's name.
+        value: Its value.
+    """
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with Path(path).open("a", encoding="utf-8") as file:
+            file.write(f"{name}={value}\n")
+
+
+def write_pages(hashes: dict[str, str]) -> None:
+    """Keep the given page hashes beside the transcription.
+
+    Args:
+        hashes: The hashes, by URL.
+    """
+    text = json.dumps(hashes, indent=1, sort_keys=True) + "\n"
+    PAGES.write_text(text, encoding="utf-8", newline="\n")
+
+
+def main() -> None:
+    """Check every source and refresh what moved."""
+    parser = argparse.ArgumentParser(
+        description="Follow the pinned upstream schema sources."
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path(tempfile.gettempdir()) / "aiollm-upstream",
+        help="folder for pull-request.md and issue.md",
+    )
+    parser.add_argument(
+        "--update-pages",
+        action="store_true",
+        help="only store the current hashes of the Files reference pages",
+    )
+    args = parser.parse_args()
+
+    hashes = page_hashes()
+    if args.update_pages:
+        write_pages(hashes)
+        return
+
+    out: Path = args.out
+    out.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as temporary:
+        openapi = Path(temporary) / "openapi.yaml"
+        pins = [
+            change
+            for change in (follow_openai(openapi), follow_anthropic())
+            if change is not None
+        ]
+        if pins:
+            env = {"OPENAI_OPENAPI": str(openapi)}
+            run(
+                "uv",
+                "run",
+                "--group",
+                "upstream",
+                "python",
+                "-m",
+                "tests.providers.contracts.update",
+                **env,
+            )
+            run("uv", "run", "python", str(SCRIPT), **env)
+            body = PULL_REQUEST.format(table=table(pins))
+            (out / "pull-request.md").write_text(body, encoding="utf-8")
+
+    pages = changed_pages(hashes)
+    if pages:
+        body = ISSUE.format(table=table(pages))
+        (out / "issue.md").write_text(body, encoding="utf-8")
+
+    output("pins", "true" if pins else "false")
+    output("pages", "true" if pages else "false")
+    for change in [*pins, *pages]:
+        sys.stdout.write(f"{change.source}: {change.old} -> {change.new}\n")
+
+
+if __name__ == "__main__":
+    main()

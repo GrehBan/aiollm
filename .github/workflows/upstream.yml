@@ -1,0 +1,79 @@
+name: upstream
+
+# Every Monday, compare the pinned schema sources with upstream
+# (scripts/refresh_upstream.py). A moved pin becomes one pull request on
+# the branch upstream/refresh, opened or updated with UPSTREAM_PR_TOKEN
+# (a fine-grained token: Contents and Pull requests, read and write), so
+# the pull request runs CI like any other. A changed page of Anthropic's
+# Files reference opens an issue, or rewrites the open one, until its
+# hashes are updated. Nothing is merged here.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.UPSTREAM_PR_TOKEN }}
+      - uses: astral-sh/setup-uv@v10.3.3
+      - run: uv sync --all-groups --locked
+      - id: check
+        run: uv run python scripts/refresh_upstream.py --out "$RUNNER_TEMP/upstream"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - id: tests
+        if: steps.check.outputs.pins == 'true'
+        continue-on-error: true
+        run: uv run pytest -q -p no:cacheprovider
+      - name: open or update the pull request
+        if: steps.check.outputs.pins == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_PR_TOKEN }}
+          TESTS: ${{ steps.tests.outcome }}
+          BODY: ${{ runner.temp }}/upstream/pull-request.md
+        run: |
+          branch=upstream/refresh
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          git add pyproject.toml uv.lock scripts src tests
+          git commit -q -m "Follow the upstream schema sources"
+          git push -q --force origin "$branch"
+          printf '\nTests in the refresh job: %s.\n' "$TESTS" >> "$BODY"
+          title="Follow the upstream schema sources"
+          if gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit "$branch" --title "$title" --body-file "$BODY"
+          else
+            draft=()
+            if [ "$TESTS" != success ]; then draft=(--draft); fi
+            gh pr create --base master --head "$branch" --title "$title" \
+              --body-file "$BODY" "${draft[@]}"
+          fi
+      - name: open or update the issue
+        if: steps.check.outputs.pages == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ runner.temp }}/upstream/issue.md
+        run: |
+          title="Anthropic Files reference changed"
+          number=$(gh issue list --state open --search "in:title \"$title\"" \
+            --json number,title -q ".[] | select(.title == \"$title\") | .number" | head -1)
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$BODY"
+          else
+            gh issue create --title "$title" --body-file "$BODY"
+          fi

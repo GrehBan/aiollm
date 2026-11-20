@@ -218,7 +218,7 @@ Many changes to this library are written with [Claude Code](https://claude.com/c
 
 - **[`CLAUDE.md`](https://github.com/GrehBan/aiollm/blob/master/CLAUDE.md)** is loaded into every session: the commands, the invariants that are easy to break and the conventions. If your change alters an invariant or a convention, update `CLAUDE.md` in the same pull request; a stale profile misleads the next session.
 - **Project skills** in `.claude/skills/` carry the project's workflows, and Claude picks them up when a task matches; you can also call one by name, such as `/ai-api-endpoint`. They are listed in the table below.
-- **Provider documentation.** Point Claude at the providers' official sources: OpenAI's OpenAPI file (`openai/openai-openapi`), Anthropic's SDK types and API reference. The schema snapshot in `tests/providers/contracts/` is rebuilt from the pinned ones by `tests/providers/contracts/update.py`.
+- **Provider documentation.** Point Claude at the providers' official sources: OpenAI's OpenAPI file (`openai/openai-openapi`), Anthropic's SDK types and API reference. The schema snapshot in `tests/providers/contracts/` is rebuilt from the pinned ones by `tests/providers/contracts/update.py`; a weekly workflow (`upstream.yml`, `scripts/refresh_upstream.py`) opens a pull request when a source moves ahead of its pin.
 
 | Skill | Use it for |
 |---|---|
