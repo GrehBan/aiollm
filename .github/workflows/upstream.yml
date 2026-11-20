@@ -4,7 +4,10 @@ name: upstream
 # (scripts/refresh_upstream.py). A moved pin becomes one pull request on
 # the branch upstream/refresh, opened or updated with UPSTREAM_PR_TOKEN
 # (a fine-grained token: Contents and Pull requests, read and write), so
-# the pull request runs CI like any other. A changed page of Anthropic's
+# the pull request runs CI like any other. Its body lists the public names
+# the new types add or remove. Once someone has pushed a commit to the open
+# pull request, the branch is no longer rebuilt: newer sources only get a
+# comment there, until it is merged. A changed page of Anthropic's
 # Files reference opens an issue, or rewrites the open one, until its
 # hashes are updated. Nothing is merged here.
 
@@ -29,6 +32,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           token: ${{ secrets.UPSTREAM_PR_TOKEN }}
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v10.3.3
       - run: uv sync --all-groups --locked
       - id: check
@@ -47,15 +51,36 @@ jobs:
           BODY: ${{ runner.temp }}/upstream/pull-request.md
         run: |
           branch=upstream/refresh
+          bot="41898282+github-actions[bot]@users.noreply.github.com"
+          title="Follow the upstream schema sources"
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "$bot"
+          open=false
+          if gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            open=true
+          fi
+          # Commits someone added to the open pull request are kept: the
+          # branch is not rebuilt, the pull request only gets a comment.
+          if [ "$open" = true ]; then
+            git fetch -q origin "$branch"
+            others=$(git log --format=%ae "HEAD..FETCH_HEAD" | grep -vxF "$bot" || true)
+            if [ -n "$others" ]; then
+              {
+                printf 'The weekly check found newer sources, but this branch has commits '
+                printf 'added by hand, so it was not rebuilt. Merge this pull request; '
+                printf 'the next run opens a new one.\n\n'
+                sed -n '/^| Source/,/^$/p' "$BODY"
+              } > "$RUNNER_TEMP/comment.md"
+              gh pr comment "$branch" --body-file "$RUNNER_TEMP/comment.md"
+              exit 0
+            fi
+          fi
           git switch -C "$branch"
           git add pyproject.toml uv.lock scripts src tests
-          git commit -q -m "Follow the upstream schema sources"
+          git commit -q -m "$title"
           git push -q --force origin "$branch"
           printf '\nTests in the refresh job: %s.\n' "$TESTS" >> "$BODY"
-          title="Follow the upstream schema sources"
-          if gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN; then
+          if [ "$open" = true ]; then
             gh pr edit "$branch" --title "$title" --body-file "$BODY"
           else
             draft=()
