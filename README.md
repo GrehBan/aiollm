@@ -26,17 +26,14 @@ You describe each API call as a small declarative class: a Pydantic model whose 
 
 ## Installation
 
-The library requires Python 3.13 or newer. It is not on PyPI yet, so install it from source:
+The library requires Python 3.13 or newer. Install the provider you use; it brings the core, [`aiollm-core`](https://pypi.org/project/aiollm-core/), with it:
 
 ```bash
-git clone https://github.com/aiollm-org/aiollm.git
-cd aiollm
-uv sync
+pip install aiollm-openai      # import aiollm_openai
+pip install aiollm-anthropic   # import aiollm_anthropic
 ```
 
-Or with pip: `pip install -e .`
-
-The provider clients are packages of their own, installed the same way from their repositories: [aiollm-openai](https://github.com/aiollm-org/aiollm_openai) (`import aiollm_openai`) and [aiollm-anthropic](https://github.com/aiollm-org/aiollm_anthropic) (`import aiollm_anthropic`).
+Or the core alone, for clients of your own: `pip install aiollm-core` (`import aiollm`). With uv, `uv add` takes the same names. The `testing` extra, `aiollm-core[testing]`, adds the test kit for a provider of your own. To work on the library itself, see [Contributing](https://aiollm-org.github.io/aiollm/contributing/).
 
 ## Quick start
 
