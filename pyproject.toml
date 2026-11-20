@@ -99,6 +99,12 @@ docs = [
     "mkdocstrings[python]>=1.0.8",
     "rumdl>=0.3.2",
 ]
+# The provider SDKs whose types are the source of a wire-contract
+# snapshot (tests/providers/contracts/update.py): Anthropic publishes no
+# OpenAPI file. A new version changes the snapshot and this pin together.
+upstream = [
+    "anthropic==2.3.0",
+]
 test = [
     "hypothesis>=6.170.14",
     "jsonschema>=4.25",

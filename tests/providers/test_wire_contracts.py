@@ -1,10 +1,10 @@
 """The provider methods and types follow the providers' own schemas.
 
 The schemas and examples in ``tests/providers/contracts/`` are a
-snapshot of the offline documentation dump (``manifest.json`` says
-which SDK versions and documents they come from; ``update.py`` rebuilds
-them). The request schemas are closed here: an object that lists its
-properties takes no others, so a misspelled or removed field fails
+snapshot of the providers' official OpenAPI files and SDK types
+(``manifest.json`` says which; ``update.py`` rebuilds them). The
+request schemas are closed here: an object that lists its properties
+takes no others, so a misspelled or removed field fails
 instead of passing as an unknown extra.
 
 A snapshot does not follow the provider by itself: these tests catch
