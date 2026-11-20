@@ -5,10 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from aiollm.http.auth import BearerAuth
-from aiollm.providers.openai.api import OPENAI_API
-from aiollm.providers.openai.resolver import OpenAIErrorResolver
 from aiollm.session.factory import SessionFactory
 from aiollm.testing import FakeTransport
+from aiollm.testing.echo import ECHO_API, EchoErrorResolver
 
 
 def test_factory_turns_a_token_into_auth_and_forwards_arguments() -> None:
@@ -24,11 +23,11 @@ def test_factory_turns_a_token_into_auth_and_forwards_arguments() -> None:
         calls.append((api, auth, resolver, limit))
         return FakeTransport()
 
-    resolver = OpenAIErrorResolver()
+    resolver = EchoErrorResolver()
     factory = SessionFactory(
         build,
         auth_factory=BearerAuth,
-        api=OPENAI_API,
+        api=ECHO_API,
         error_resolver=resolver,
     )
 
@@ -36,6 +35,6 @@ def test_factory_turns_a_token_into_auth_and_forwards_arguments() -> None:
     factory(BearerAuth("ready"))
 
     assert calls == [
-        (OPENAI_API, BearerAuth("token"), resolver, 5),
-        (OPENAI_API, BearerAuth("ready"), resolver, 1),
+        (ECHO_API, BearerAuth("token"), resolver, 5),
+        (ECHO_API, BearerAuth("ready"), resolver, 1),
     ]

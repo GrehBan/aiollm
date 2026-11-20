@@ -45,11 +45,8 @@ from aiollm.types.requests import GenerationRequest
 from aiollm.testing import LocalAPI, Reply
 from aiollm.testing.aiohttp import Recorder
 from aiollm.testing.contract.generation import events as sse
-from tests.providers.test_generation_contract import (
-    OPENAI,
-    openai_called_stream,
-)
-from tests.providers.test_openai_responses import RESPONSE as OPENAI_EXAMPLE
+from tests.docs.payloads import OPENAI_OVERLOADED, openai_called_stream
+from tests.docs.payloads import OPENAI_RESPONSE as OPENAI_EXAMPLE
 
 ROOT = Path(__file__).parents[2]
 HISTORICAL: Final = frozenset({"testing-plan.md", "sse-ndjson-plan.md"})
@@ -1128,7 +1125,7 @@ async def test_tools_stream_fails_after_a_done_call(
 ) -> None:
     await examples.run(QUICK_START, TOOLS, TOOLS_STREAM)
     monkeypatch.setattr(session_factory, "api", api)
-    recorder.reply(sse([*openai_called_stream()[:-1], OPENAI.overloaded]))
+    recorder.reply(sse([*openai_called_stream()[:-1], OPENAI_OVERLOADED]))
 
     async with OpenAIClient("sk-...") as client:
         with pytest.raises(ServiceUnavailableError):

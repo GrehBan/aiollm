@@ -48,23 +48,31 @@ The scenarios are the classes of `aiollm.testing.contract`; a provider
 runs them by subclassing each with its case (`aiollm.testing.echo` and
 `tests/testing/test_echo_contracts.py` are a whole worked example).
 
-- `tests/providers/test_generation_contract.py`: add a `GenerationCase`
-  and a `GenerationContract` subclass - the same scenarios run against
-  every provider's `client.generation`.
-- `tests/providers/test_files_contract.py`: add a `FilesCase` and a
-  `FilesContract` subclass when the provider has a Files API (a
-  `BaseFilesAdapter` bound as `files`).
-- `tests/providers/test_provider_clients.py`: add a `ClientCase` and a
-  `ClientContract` subclass.
+The provider's tests live in `tests/providers/<name>/`, laid out as its own
+repository will be (`contracts/`, `typing/check_public_api.py`,
+`public_api.json` with its `test_public_api.py`; scripts in
+`scripts/<name>/`), importing nothing from another provider's folder.
+
+- `test_generation_contract.py`: a `GenerationCase` and a
+  `GenerationContract` subclass - the same scenarios run against every
+  provider's `client.generation`.
+- `test_files_contract.py`: a `FilesCase` and a `FilesContract` subclass
+  when the provider has a Files API (a `BaseFilesAdapter` bound as
+  `files`).
+- `test_client_contract.py`: a `ClientCase` and a `ClientContract`
+  subclass.
 - A scenario that would need a branch for the provider gets a case field
   instead; the scenarios never name a provider.
-- `test_<name>_client.py` keeps only what is the provider's own.
+- `test_client.py` keeps only what is the provider's own.
+- The package is added to `PROVIDERS` of `tests/unit/test_extension_api.py`.
 - `docs/unification.md`: a column's worth of mapping for every shared field
   and error case.
 
 ## 4. Docs, public API, release
 
 `docs/guide/providers.md` section, README feature list, `CLAUDE.md` if an
-invariant changes, `tests/unit/test_public_api.py` passing, then
+invariant changes, the provider's `test_public_api.py` passing, then
 `definition-of-done` and `ai-api-release` (a new provider is a minor bump).
+`tests/unit/test_public_api.py` covers only the core: the provider's
+`public_api.json` lists its packages.
 Report in Russian.

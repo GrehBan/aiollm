@@ -1,6 +1,6 @@
 ---
 name: ai-api-endpoint
-description: Add or change an endpoint of an existing aiollm provider (OpenAI, Anthropic) - read the upstream schema from the provider's official OpenAPI file or SDK types, generate types and request parameters with scripts/generate_provider_types.py (aiollm-codegen), hand-write the method classes, the wire-contract snapshot and Case, adapters and shared-layer mapping, docs and tests. Use it in the aiollm repository whenever the owner asks for a new provider endpoint or resource (models, embeddings, files, tools, structured output...), a new request field on an existing method, or to follow an upstream schema change.
+description: Add or change an endpoint of an existing aiollm provider (OpenAI, Anthropic) - read the upstream schema from the provider's official OpenAPI file or SDK types, generate types and request parameters with scripts/<provider>/generate_types.py (aiollm-codegen), hand-write the method classes, the wire-contract snapshot and Case, adapters and shared-layer mapping, docs and tests. Use it in the aiollm repository whenever the owner asks for a new provider endpoint or resource (models, embeddings, files, tools, structured output...), a new request field on an existing method, or to follow an upstream schema change.
 ---
 
 # aiollm endpoint
@@ -28,16 +28,19 @@ provider's types and is reached through `raw`.
 
 ## 2. Snapshot and contract tests
 
-- `tests/providers/contracts/update.py`: add an `Endpoint(provider, name,
-  source)` to `ENDPOINTS`, with `source=OpenAPIOperation(...)` naming the
-  request, response and stream components where the provider publishes an
-  official OpenAPI file (OpenAI), otherwise `SDKOperation(...)` naming the SDK
-  resource method and its response and stream types (Anthropic); put the
-  documented or recorded examples in `responses.json` and `events.json`, then
-  refresh with
-  `OPENAI_OPENAPI=<openapi.yaml> uv run --group upstream python -m tests.providers.contracts.update`.
+Each provider keeps its own snapshot in `tests/providers/<provider>/`,
+as its own repository will.
+
+- `tests/providers/<provider>/contracts/update.py`: add an
+  `Endpoint(name, source)` to `ENDPOINTS`, with `source=OpenAPIOperation(...)`
+  naming the request, response and stream components of OpenAI's official
+  OpenAPI file, or `SDKOperation(...)` naming the SDK resource method and its
+  response and stream types (Anthropic); put the documented or recorded
+  examples in `responses.json` and `events.json`, then refresh with
+  `OPENAI_OPENAPI=<openapi.yaml> uv run python -m tests.providers.openai.contracts.update`
+  or `uv run --group upstream python -m tests.providers.anthropic.contracts.update`.
   Review the snapshot diff and `manifest.json` (its `rejected` examples).
-- `tests/providers/test_wire_contracts.py`: add a `Case` (methods, a request
+- `tests/providers/<provider>/test_wire_contracts.py`: add a `Case` (methods, a request
   that sets every field the adapter and the options fill, response model,
   event union, examples, adapter, options, type and parameter modules). The
   tests then check the request against the closed schema, every method field
@@ -46,9 +49,9 @@ provider's types and is reached through `raw`.
 
 ## 3. Types and request parameters
 
-They are generated, never written by hand: `scripts/generate_provider_types.py`
+They are generated, never written by hand: `scripts/<provider>/generate_types.py`
 runs the pinned aiollm-codegen (the `codegen` dependency group; `--codegen
-DIR` for a local checkout) for each provider, OpenAI from its official OpenAPI
+DIR` for a local checkout) for its provider, OpenAI from its official OpenAPI
 file (pinned by URL and SHA-256 in the script, the same file as the contract
 snapshot) restricted to the endpoints' operations, Anthropic from the
 SDK-derived snapshot and the transcribed Files reference, and replaces
@@ -61,9 +64,9 @@ unknown variants as `UnknownVariant`, request models with `extra="forbid"`.
 A defect in them is fixed in aiollm-codegen (its own project), then the
 pin in `pyproject.toml` moves to that commit (`uv lock`) and they are
 regenerated; CI fails when the committed files differ from a regeneration. `types/options.py` stays hand-written: its `TypedDict`s mirror
-the method fields (`test_provider_options.py`), so dict literals type-check.
+the method fields (the provider's `test_options.py`), so dict literals type-check.
 A new Anthropic SDK version changes the `upstream` pin, the snapshot and the
-generated types in one change (`test_codegen_pin.py` checks they agree).
+generated types in one change (Anthropic's `test_codegen_pin.py` checks they agree).
 
 ## 4. Methods
 
@@ -85,7 +88,7 @@ fields get a row in `docs/unification.md` (checked by
 
 ## 6. Tests, docs, release
 
-Tests in `tests/providers/` (and the generation contract if the shared layer
+Tests in `tests/providers/<provider>/` (and the generation contract if the shared layer
 changes), docs in `docs/guide/providers.md` (and generation/unification),
 public names re-exported with sorted `__all__`, then `definition-of-done` and
 `ai-api-release`. Report in Russian.

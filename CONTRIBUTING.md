@@ -62,7 +62,7 @@ src/aiollm/
     └── openai/         OpenAIClient, the Responses and Files APIs: methods/, types/, adapters/
 ```
 
-The packages are layers, listed from the bottom up; a module imports only from the layers below it. The core never imports a provider, its infrastructure never imports the shared generation and files layer, and a provider takes from the core only the names of its extension API (`aiollm/testing/extension_api.json`, see [Extending](https://aiollm-org.github.io/aiollm/guide/extending/)). Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/` (every provider against the shared scenarios of `aiollm.testing.contract` and the upstream schemas), `tests/testing/` (the test kit, and the same scenarios on its echo provider), `tests/typing/` (static checks of the public API) and `tests/docs/` (the examples of these pages).
+The packages are layers, listed from the bottom up; a module imports only from the layers below it. The core never imports a provider, its infrastructure never imports the shared generation and files layer, and a provider takes from the core only the names of its extension API (`aiollm/testing/extension_api.json`, see [Extending](https://aiollm-org.github.io/aiollm/guide/extending/)). Transport code lives only in `*/aiohttp.py` modules, so `import aiollm` does not import aiohttp. The tests mirror this: `tests/unit/`, `tests/session/`, `tests/integration/` (aiohttp against a local server), `tests/providers/<provider>/` (each provider against the shared scenarios of `aiollm.testing.contract` and its upstream schemas, laid out as its own repository will be, with its `contracts/`, `typing/` and `public_api.json`; the scripts are `scripts/<provider>/`), `tests/testing/` (the test kit, and the same scenarios on its echo provider), `tests/typing/` (static checks of the public API, on the echo provider) and `tests/docs/` (the examples of these pages, with their own provider payloads).
 
 ## Making changes in code
 
@@ -72,7 +72,7 @@ At this point you can make any changes in the code that you want: fixes, new fea
 - **Modern Python, the oldest supported version.** Every module starts with `from __future__ import annotations`; use PEP 695 generics (`class Stream[T]`) and nothing newer than Python 3.13 allows.
 - **Public names are exported on purpose.** A name users need goes into its package's `__init__.py` with a sorted `__all__`; everything else stays internal.
 - **Fail early.** A mistake in a method class raises `TypeError` when the class is defined, a bad value raises before anything is sent, and nothing is dropped silently.
-- **Generated code is regenerated, not edited.** A provider's `types/<family>.py` and `methods/params/` come from [aiollm-codegen](https://github.com/aiollm-org/aiollm_codegen) through `uv run python scripts/generate_provider_types.py`. The generator (the `codegen` dependency group) and OpenAI's OpenAPI file (a URL and a SHA-256 in the script) are pinned, and CI fails when a regeneration changes any file; fix a defect in aiollm-codegen and move the pin.
+- **Generated code is regenerated, not edited.** A provider's `types/<family>.py` and `methods/params/` come from [aiollm-codegen](https://github.com/aiollm-org/aiollm_codegen) through `uv run python scripts/<provider>/generate_types.py` (`openai` or `anthropic`). The generator (the `codegen` dependency group) and OpenAI's OpenAPI file (a URL and a SHA-256 in the script) are pinned, and CI fails when a regeneration changes any file; fix a defect in aiollm-codegen and move the pin.
 - **Breaking changes are allowed before 1.0, but marked.** Say so in the changelog fragment (see [Describe changes](#describe-changes)); see [Versioning](https://aiollm-org.github.io/aiollm/guide/design/#versioning) for what counts as one.
 
 For a new endpoint or a new provider, read [Extending](https://aiollm-org.github.io/aiollm/guide/extending/): provider methods follow the provider's own JSON schema field by field, and the wire-contract tests check that they do.
@@ -122,7 +122,7 @@ Using traditional approach:
 ```bash
 pytest tests
 pytest --cov                        # with branch coverage
-pytest --mypy -m mypy tests/typing  # static checks of the public API
+pytest --mypy -m mypy tests/typing tests/providers/*/typing  # static checks of the public API
 ```
 
 Or with uv:
@@ -130,7 +130,7 @@ Or with uv:
 ```bash
 uv run pytest tests
 uv run pytest --cov
-uv run pytest --mypy -m mypy tests/typing
+uv run pytest --mypy -m mypy tests/typing tests/providers/openai/typing tests/providers/anthropic/typing
 ```
 
 What the tests expect from a change:
@@ -218,7 +218,7 @@ Many changes to this library are written with [Claude Code](https://claude.com/c
 
 - **[`CLAUDE.md`](https://github.com/aiollm-org/aiollm/blob/master/CLAUDE.md)** is loaded into every session: the commands, the invariants that are easy to break and the conventions. If your change alters an invariant or a convention, update `CLAUDE.md` in the same pull request; a stale profile misleads the next session.
 - **Project skills** in `.claude/skills/` carry the project's workflows, and Claude picks them up when a task matches; you can also call one by name, such as `/ai-api-endpoint`. They are listed in the table below.
-- **Provider documentation.** Point Claude at the providers' official sources: OpenAI's OpenAPI file (`openai/openai-openapi`), Anthropic's SDK types and API reference. The schema snapshot in `tests/providers/contracts/` is rebuilt from the pinned ones by `tests/providers/contracts/update.py`; a weekly workflow (`upstream.yml`, `scripts/refresh_upstream.py`) opens a pull request when a source moves ahead of its pin.
+- **Provider documentation.** Point Claude at the providers' official sources: OpenAI's OpenAPI file (`openai/openai-openapi`), Anthropic's SDK types and API reference. Each provider's schema snapshot in `tests/providers/<provider>/contracts/` is rebuilt from the pinned ones by the `update.py` beside it; a weekly workflow (`upstream.yml`, `scripts/<provider>/refresh_upstream.py`) opens a pull request when a source moves ahead of its pin.
 
 | Skill | Use it for |
 |---|---|

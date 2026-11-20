@@ -22,13 +22,13 @@ from aiollm.http.exceptions.resolver import BaseErrorResolver
 from aiollm.http.exceptions.status import RateLimitError
 from aiollm.http.exceptions.transport import APIConnectionError
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
-from aiollm.providers.openai import OpenAIClient
 from aiollm.response.aiohttp import wait_for_writer
 from aiollm.response.buffered import BufferedResponse
 from aiollm.session.aiohttp import AiohttpSession
 from aiollm.session.retry.runner import should_retry
 from aiollm.testing import TEST_TOKEN, FakeTransport, LocalAPI, Reply
 from aiollm.testing.aiohttp import Recorder
+from aiollm.testing.echo import EchoClient
 from aiollm.types.unknown import UNKNOWN, by_type
 
 pytestmark = pytest.mark.integration
@@ -230,15 +230,15 @@ async def test_the_key_from_the_environment_is_logged_by_name(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    monkeypatch.setenv("ECHO_API_KEY", "sk-from-env")
 
-    async with OpenAIClient():
+    async with EchoClient():
         pass
 
     assert (
         "aiollm.client.validators",
         "DEBUG",
-        "Using the API key from OPENAI_API_KEY",
+        "Using the API key from ECHO_API_KEY",
     ) in records(caplog)
     assert "sk-from-env" not in caplog.text
 
