@@ -3,7 +3,7 @@
   "openai/responses": {
    "openapi": {
     "file": "openapi.yaml",
-    "sha256": "cf91be897ab55e4aefcfc44ec1eb7611eea1227509b67178be583244c2680ab3",
+    "sha256": "e5666b742f332bc67a43f76f2988f21e81cdc48636c3d25f79f15c7d16ab37b8",
     "openapi": "3.1.0",
     "version": "2.3.0"
    },
@@ -23,7 +23,7 @@
   "anthropic/messages": {
    "sdk": {
     "package": "anthropic",
-    "version": "2.3.0",
+    "version": "2.11.0",
     "api_version": "2026-10-21"
    },
    "request": {
@@ -50,7 +50,7 @@
    ],
    "openapi": {
     "file": "openapi.yaml",
-    "sha256": "cf91be897ab55e4aefcfc44ec1eb7611eea1227509b67178be583244c2680ab3",
+    "sha256": "e5666b742f332bc67a43f76f2988f21e81cdc48636c3d25f79f15c7d16ab37b8",
     "openapi": "3.1.0",
     "version": "2.3.0"
    },

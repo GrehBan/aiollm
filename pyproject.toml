@@ -103,7 +103,7 @@ docs = [
 # snapshot (tests/providers/contracts/update.py): Anthropic publishes no
 # OpenAPI file. A new version changes the snapshot and this pin together.
 upstream = [
-    "anthropic==2.3.0",
+    "anthropic==2.11.0",
 ]
 test = [
     "hypothesis>=6.170.14",
