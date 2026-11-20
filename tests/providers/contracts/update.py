@@ -1,44 +1,48 @@
 """Rebuild the wire-contract snapshots from the provider schemas.
 
-The documentation examples come from the ``docs-lite`` folder of
-``GrehBan/docs-lite-mcp`` (the data behind the ``unified-api-docs`` MCP
-server). The schemas come from the provider's official OpenAPI
-specification where it publishes one (OpenAI): the request, response
-and stream-event components of the endpoint, with every component they
-reference under ``$defs``. Where it does not (Anthropic), they are the
-SDK-derived schemas of the dump. For every endpoint in ``ENDPOINTS``
-this script writes the three schemas and keeps the documentation
-examples that they accept: whole response bodies, and single stream
-events taken out of the SSE examples. An example that looks like a
-response or a known event but fails the upstream schema is not copied;
-it is listed under ``rejected`` in ``manifest.json`` with the first
-error, so nothing is dropped silently.
+Every endpoint has one pinned upstream source. Where the provider
+publishes an official OpenAPI file (OpenAI: ``openapi.yaml`` of
+``openai/openai-openapi``, read from ``OPENAI_OPENAPI``), the schemas
+are the endpoint's request, response and stream-event components, with
+every component they reference under ``$defs``. Where it does not
+(Anthropic Messages), they are derived from the types of the
+provider's official Python SDK, pinned in the ``upstream`` dependency
+group, with pydantic's ``TypeAdapter``. Anthropic's Files API is
+``sources/anthropic-files.openapi.json``, a transcription of its API
+reference.
+
+The examples (``responses.json``, ``events.json``) are kept in the
+repository: documented and recorded payloads, added by hand. A refresh
+checks each against the new schemas; one that fails is taken out and
+listed under ``rejected`` in ``manifest.json`` with the first error, so
+nothing is dropped silently.
 
 Usage::
 
-    uv run python -m tests.providers.contracts.update [DOCS_LITE_DIR]
-    uv run python -m tests.providers.contracts.update --openapi-only
-
-Without an argument the dump is found through ``DOCS_LITE_DIR``, or
-next to ``DOCS_SUITE_MCP_DIR`` (the variable ``.mcp.json`` uses).
-OpenAI's specification (``openapi.yaml`` of ``openai/openai-openapi``)
-is read from ``OPENAI_OPENAPI``.
+    export OPENAI_OPENAPI=<openapi.yaml>
+    uv run --group upstream python -m tests.providers.contracts.update
 """
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import importlib
+import inspect
 import json
 import os
-import subprocess
 import sys
+import textwrap
+import typing
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, cast
+from types import UnionType
+from typing import Any, Final, NotRequired, Required, TypedDict, cast
 
 import yaml
 from jsonschema import Draft202012Validator
+from pydantic import TypeAdapter
 
 CONTRACTS: Final = Path(__file__).parent
 """Folder of the snapshots."""
@@ -65,62 +69,44 @@ class OpenAPIOperation:
 
 
 @dataclass(frozen=True)
+class SDKOperation:
+    """Where an endpoint's types are in the provider's official SDK.
+
+    Each name is ``module:attribute``, imported from the SDK the
+    ``upstream`` dependency group pins.
+
+    Attributes:
+        resource: The SDK class whose method sends the request.
+        method: That method's name.
+        response: The type of the JSON response.
+        stream: The type of a stream event.
+    """
+
+    resource: str
+    method: str
+    response: str
+    stream: str
+
+
+@dataclass(frozen=True)
 class Endpoint:
     """One endpoint whose contract is snapshotted.
 
     Attributes:
-        provider: Provider id in the dump.
+        provider: Provider id.
         name: Folder name of the snapshot.
-        operation: Operation id in the dump's ``_meta/enrichment.json``.
-        stream: Stream contract id in ``_meta/stream-contracts.json``.
-        kind: Field and value that mark a JSON example as a response
-            body of this endpoint, such as ``("object", "response")``.
-        openapi: Where the schemas are in the provider's official
-            OpenAPI file; ``None`` to take the dump's schemas.
+        source: Where its schemas are: the provider's official OpenAPI
+            file, or its official SDK.
     """
 
     provider: str
     name: str
-    operation: str
-    stream: str
-    kind: tuple[str, str]
-    openapi: OpenAPIOperation | None = None
-
-
-REDACTED: Final = frozenset({"fallback_credit_token"})
-"""Fields whose example values are replaced by ``REDACTION``.
-
-They are opaque tokens (the documented one is base64 of
-``Anthropic/Claude``) that secret scanners flag as credentials; the
-library does not read them.
-"""
-
-REDACTION: Final = "<redacted>"
-"""Value written in place of a ``REDACTED`` field."""
-
-
-def redact(value: Any) -> Any:
-    """Replace the values of ``REDACTED`` fields at any depth.
-
-    Args:
-        value: A decoded example.
-
-    Returns:
-        A copy with every ``REDACTED`` field set to ``REDACTION``.
-    """
-    if isinstance(value, dict):
-        return {
-            key: REDACTION if key in REDACTED else redact(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [redact(item) for item in value]
-    return value
+    source: OpenAPIOperation | SDKOperation
 
 
 @dataclass(frozen=True)
 class OpenAPIEndpoints:
-    """A group of endpoints snapshotted from one OpenAPI file, no docs-lite.
+    """A group of endpoints snapshotted from one OpenAPI file alone.
 
     Attributes:
         provider: Provider id.
@@ -143,10 +129,7 @@ ENDPOINTS: Final = (
     Endpoint(
         provider="openai",
         name="responses",
-        operation="openai:post:688886f44f64cc",
-        stream="openai.responses",
-        kind=("object", "response"),
-        openapi=OpenAPIOperation(
+        source=OpenAPIOperation(
             variable="OPENAI_OPENAPI",
             request="CreateResponse",
             response="Response",
@@ -156,9 +139,12 @@ ENDPOINTS: Final = (
     Endpoint(
         provider="anthropic",
         name="messages",
-        operation="anthropic:post:c64fb925aa6487",
-        stream="anthropic.messages",
-        kind=("type", "message"),
+        source=SDKOperation(
+            resource="anthropic.resources.messages.messages:Messages",
+            method="create",
+            response="anthropic.types:Message",
+            stream="anthropic.types:RawMessageStreamEvent",
+        ),
     ),
 )
 """Endpoints the library implements."""
@@ -188,9 +174,9 @@ OPENAPI_ENDPOINTS: Final = (
 )
 """Endpoint groups taken from an OpenAPI file alone.
 
-Anthropic publishes no OpenAPI file and docs-lite has no schemas of its
-Files API, so its file is a transcription of the API reference
-(``sources/``, with the pages and the date in its ``info``).
+Anthropic publishes no OpenAPI file, so its file is a transcription of
+the API reference (``sources/``, with the pages and the date in its
+``info``).
 """
 
 METHODS: Final = ("get", "post", "put", "patch", "delete")
@@ -247,25 +233,6 @@ def event_tags(schema: dict[str, Any]) -> set[str]:
     return tags
 
 
-def sse_data(text: str) -> Iterator[str]:
-    """Yield the ``data`` of every event of an SSE example.
-
-    Args:
-        text: The example, as the dump stores it.
-
-    Yields:
-        The joined ``data`` lines of each event.
-    """
-    lines: list[str] = []
-    for line in [*text.splitlines(), ""]:
-        if not line:
-            if lines:
-                yield "\n".join(lines)
-            lines = []
-        elif line.startswith("data:"):
-            lines.append(line.removeprefix("data:").removeprefix(" "))
-
-
 def first_error(validator: Draft202012Validator, value: Any) -> str | None:
     """Return the first schema error of a value.
 
@@ -303,18 +270,6 @@ def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(value, indent=1, ensure_ascii=False) + "\n"
     path.write_text(text, encoding="utf-8", newline="\n")
-
-
-def canonical(value: Any) -> str:
-    """Return a key for finding duplicate examples.
-
-    Args:
-        value: A decoded example.
-
-    Returns:
-        Its JSON with sorted keys.
-    """
-    return json.dumps(value, sort_keys=True)
 
 
 COMPONENTS: Final = "#/components/schemas/"
@@ -506,115 +461,160 @@ def read_openapi(operation: OpenAPIOperation) -> tuple[Path, dict[str, Any]]:
     return path, yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def source_of(entry: dict[str, Any]) -> dict[str, Any]:
-    """Describe where a schema came from.
+def sdk_attribute(name: str) -> Any:
+    """Import an attribute of the provider's SDK.
 
     Args:
-        entry: The schema entry of the dump's operation index.
+        name: ``module:attribute``.
 
     Returns:
-        Its file, hash and provenance.
+        The attribute.
     """
+    module, attribute = name.split(":")
+    return getattr(importlib.import_module(module), attribute)
+
+
+def without_omit(annotation: Any) -> Any:
+    """Drop the SDK's "not given" markers from a parameter's type.
+
+    Args:
+        annotation: The parameter's type, such as ``int | Omit``.
+
+    Returns:
+        The type the wire takes, such as ``int``.
+    """
+    if typing.get_origin(annotation) not in (typing.Union, UnionType):
+        return annotation
+    values = tuple(
+        value
+        for value in typing.get_args(annotation)
+        if getattr(value, "__name__", "") not in ("Omit", "NotGiven")
+    )
+    return values[0] if len(values) == 1 else typing.Union[values]  # noqa: UP007
+
+
+def wire_body(operation: SDKOperation) -> Any:
+    """Build the request body type of an SDK method.
+
+    The method passes its body to ``self._post`` as a dictionary of its
+    parameters; each key becomes a field of a ``TypedDict`` with the
+    parameter's type, required where the parameter has no default.
+
+    Args:
+        operation: Where the endpoint is in the SDK.
+
+    Returns:
+        The ``TypedDict``, named ``<Class><Method>WireBody``.
+
+    Raises:
+        SystemExit: The method's body is not such a dictionary.
+    """
+    resource = sdk_attribute(operation.resource)
+    function = inspect.unwrap(getattr(resource, operation.method))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    body = next(
+        (
+            keyword.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_post"
+            for keyword in node.keywords
+            if keyword.arg == "body"
+        ),
+        None,
+    )
+    if not isinstance(body, ast.Dict):
+        message = f"{operation.resource}.{operation.method}: no body dict"
+        raise SystemExit(message)
+    hints = typing.get_type_hints(function, include_extras=True)
+    parameters = inspect.signature(function).parameters
+    fields: dict[str, Any] = {}
+    for key, value in zip(body.keys, body.values, strict=True):
+        if not (
+            isinstance(key, ast.Constant)
+            and isinstance(key.value, str)
+            and isinstance(value, ast.Name)
+        ):
+            message = f"{operation.resource}.{operation.method}: wire field"
+            raise SystemExit(message)
+        hint = without_omit(hints[value.id])
+        required = parameters[value.id].default is inspect.Parameter.empty
+        fields[key.value] = Required[hint] if required else NotRequired[hint]
+    name = resource.__name__ + operation.method.title() + "WireBody"
+    return TypedDict(name, fields)  # type: ignore[operator]
+
+
+def sdk_schemas(operation: SDKOperation) -> dict[str, Any]:
+    """Derive an endpoint's schemas from the provider's SDK.
+
+    Args:
+        operation: Where the endpoint is in the SDK.
+
+    Returns:
+        The request, response and stream schemas, by name.
+    """
+    request = TypeAdapter(wire_body(operation)).json_schema(mode="validation")
     return {
-        "file": entry["file"],
-        "sha256": entry.get("sha256"),
-        "provenance": entry.get("provenance"),
+        "request": request,
+        "response": TypeAdapter(
+            sdk_attribute(operation.response)
+        ).json_schema(),
+        "stream": TypeAdapter(sdk_attribute(operation.stream)).json_schema(),
     }
 
 
-def candidates(docs: Path, fixture: dict[str, Any]) -> list[tuple[str, str]]:
-    """Split one documented example into the payloads it holds.
+def sdk_source(operation: SDKOperation) -> dict[str, Any]:
+    """Describe the SDK an endpoint's schemas come from.
 
     Args:
-        docs: The ``docs-lite`` folder.
-        fixture: The example's entry in the dump's index.
+        operation: Where the endpoint is in the SDK.
 
     Returns:
-        ``("responses", text)`` for a JSON example, or one
-        ``("events", data)`` per event of a stream example.
+        The package, its version, the API version it sends and the
+        types the schemas are derived from.
     """
-    text = (docs / fixture["file"]).read_text(encoding="utf-8")
-    if fixture["kind"] == "json":
-        return [("responses", text)]
-    return [("events", data) for data in sse_data(text)]
+    package = operation.resource.partition(".")[0]
+    constants = importlib.import_module(f"{package}._constants")
+    return {
+        "sdk": {
+            "package": package,
+            "version": importlib.import_module(package).__version__,
+            "api_version": getattr(constants, "ANTHROPIC_API_VERSION", None),
+        },
+        "request": {
+            "type": f"{operation.resource}.{operation.method}",
+            "transformation": "pydantic.TypeAdapter.json_schema(validation)",
+        },
+        "response": {"type": operation.response},
+        "stream": {"type": operation.stream},
+    }
 
 
-def endpoint_body(
-    raw: str,
-    group: str,
-    kind: tuple[str, str],
-    tags: set[str],
-) -> dict[str, Any] | None:
-    """Decode a payload if it belongs to the endpoint.
-
-    Args:
-        raw: The payload's JSON text.
-        group: ``"responses"`` or ``"events"``.
-        kind: The field and value that mark the endpoint's responses.
-        tags: The event types of the endpoint's stream.
-
-    Returns:
-        The decoded object, or ``None`` for text that is not a JSON
-        object, a response of another kind or an event of another stream.
-    """
-    try:
-        body = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(body, dict):
-        return None
-    field, value = kind
-    if group == "responses" and body.get(field) != value:
-        return None
-    if group == "events" and body.get("type") not in tags:
-        return None
-    return cast(dict[str, Any], body)
-
-
-def snapshot(
-    docs: Path,
-    endpoint: Endpoint,
-    fixtures: list[dict[str, Any]],
-) -> dict[str, Any]:
+def snapshot(endpoint: Endpoint) -> dict[str, Any]:
     """Write the snapshot of one endpoint.
 
+    The schemas are rebuilt from the endpoint's source; the examples
+    already in the folder are checked against them, and those that fail
+    are taken out.
+
     Args:
-        docs: The ``docs-lite`` folder.
         endpoint: The endpoint.
-        fixtures: The dump's example index.
 
     Returns:
         The endpoint's manifest entry.
     """
-    operation = read_json(docs / "_meta" / "enrichment.json")["operations"][
-        endpoint.operation
-    ]
-    stream = read_json(docs / "_meta" / "stream-contracts.json")["contracts"][
-        endpoint.stream
-    ]
-    request_entry = operation["requests"][0]
-    response_entry = operation["responses"][0]
+    source = endpoint.source
     sources: dict[str, Any]
-    if endpoint.openapi is None:
-        schemas = {
-            "request": read_json(docs / request_entry["file"]),
-            "response": read_json(docs / response_entry["file"]),
-            "stream": read_json(docs / stream["schema"]["file"]),
-        }
-        sources = {
-            "request": source_of(request_entry),
-            "response": source_of(response_entry),
-            "stream": {
-                "file": stream["schema"]["file"],
-                "provenance": stream.get("provenance"),
-            },
-        }
+    if isinstance(source, SDKOperation):
+        schemas = sdk_schemas(source)
+        sources = sdk_source(source)
     else:
-        path, spec = read_openapi(endpoint.openapi)
+        path, spec = read_openapi(source)
         roots = {
-            "request": endpoint.openapi.request,
-            "response": endpoint.openapi.response,
-            "stream": endpoint.openapi.stream,
+            "request": source.request,
+            "response": source.response,
+            "stream": source.stream,
         }
         schemas = {
             name: openapi_schema(spec, root) for name, root in roots.items()
@@ -632,52 +632,26 @@ def snapshot(
     for name, schema in schemas.items():
         write_json(target / f"{name}.schema.json", schema)
 
-    responses = Draft202012Validator(schemas["response"])
-    events = Draft202012Validator(schemas["stream"])
-    tags = event_tags(schemas["stream"])
-    field, value = endpoint.kind
-    kept: dict[str, list[dict[str, Any]]] = {"responses": [], "events": []}
-    seen: set[str] = set()
-    rejected: list[dict[str, Any]] = []
-
-    for fixture in fixtures:
-        if fixture["provider"] != endpoint.provider:
-            continue
-        for group, raw in candidates(docs, fixture):
-            body = endpoint_body(raw, group, (field, value), tags)
-            if body is None:
-                continue
-            validator = responses if group == "responses" else events
-            error = first_error(validator, body)
-            if error is not None:
-                rejected.append(
-                    {"id": fixture["id"], "group": group, "error": error}
-                )
-                continue
-            key = canonical(body)
-            if key in seen:
-                continue
-            seen.add(key)
-            kept[group].append(
-                {
-                    "id": fixture["id"],
-                    "source": fixture["source"],
-                    "api_version": fixture.get("api_version"),
-                    "body": redact(body),
-                }
-            )
-
-    for group, items in kept.items():
-        write_json(target / f"{group}.json", items)
-
-    return {
-        "operation": endpoint.operation,
-        "stream_contract": endpoint.stream,
-        **sources,
-        "responses": len(kept["responses"]),
-        "events": len(kept["events"]),
-        "rejected": rejected,
+    validators = {
+        "responses": Draft202012Validator(schemas["response"]),
+        "events": Draft202012Validator(schemas["stream"]),
     }
+    counts: dict[str, int] = {}
+    rejected: list[dict[str, Any]] = []
+    for group, validator in validators.items():
+        kept: list[dict[str, Any]] = []
+        for example in read_json(target / f"{group}.json"):
+            error = first_error(validator, example["body"])
+            if error is None:
+                kept.append(example)
+            else:
+                rejected.append(
+                    {"id": example["id"], "group": group, "error": error}
+                )
+        write_json(target / f"{group}.json", kept)
+        counts[group] = len(kept)
+
+    return {**sources, **counts, "rejected": rejected}
 
 
 def class_name(operation_id: str) -> str:
@@ -996,87 +970,16 @@ def snapshot_openapi(group: OpenAPIEndpoints) -> dict[str, Any]:
     }
 
 
-def find_docs(argv: list[str]) -> Path:
-    """Find the ``docs-lite`` folder.
-
-    Args:
-        argv: Command-line arguments without the program name.
-
-    Returns:
-        The folder.
-
-    Raises:
-        SystemExit: If no folder is given or found.
-    """
-    if argv:
-        docs = Path(argv[0])
-    elif "DOCS_LITE_DIR" in os.environ:
-        docs = Path(os.environ["DOCS_LITE_DIR"])
-    elif "DOCS_SUITE_MCP_DIR" in os.environ:
-        docs = Path(os.environ["DOCS_SUITE_MCP_DIR"]).parent / "docs-lite"
-    else:
-        message = "pass the docs-lite folder or set DOCS_LITE_DIR"
-        raise SystemExit(message)
-    if not (docs / "_meta" / "enrichment.json").is_file():
-        message = f"{docs} is not a docs-lite folder"
-        raise SystemExit(message)
-    return docs
-
-
-def revision(docs: Path) -> str | None:
-    """Return the git commit of the dump, if it is a checkout.
-
-    Args:
-        docs: The ``docs-lite`` folder.
-
-    Returns:
-        The commit hash, or ``None`` outside a git checkout.
-    """
-    try:
-        result = subprocess.run(  # noqa: S603
-            ["git", "-C", str(docs), "rev-parse", "HEAD"],  # noqa: S607
-            capture_output=True,
-            check=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return result.stdout.strip()
-
-
-def main(argv: list[str]) -> None:
-    """Rebuild the snapshots and the manifest.
-
-    With ``--openapi-only`` only ``OPENAPI_ENDPOINTS`` are rebuilt, which
-    needs no docs-lite folder; the other manifest entries are kept.
-
-    Args:
-        argv: Command-line arguments without the program name.
-    """
-    manifest: dict[str, Any]
-    if argv[:1] == ["--openapi-only"]:
-        manifest = read_json(MANIFEST)
-    else:
-        docs = find_docs(argv)
-        fixtures = read_json(docs / "_meta" / "fixtures.json")["fixtures"]
-        manifest = {
-            "docs_revision": revision(docs),
-            "sdk_versions": read_json(docs / "_meta" / "enrichment.json")[
-                "sdk_versions"
-            ],
-            "endpoints": {
-                f"{endpoint.provider}/{endpoint.name}": snapshot(
-                    docs, endpoint, fixtures
-                )
-                for endpoint in ENDPOINTS
-            },
-        }
+def main() -> None:
+    """Rebuild the snapshots and the manifest."""
+    endpoints = {
+        f"{endpoint.provider}/{endpoint.name}": snapshot(endpoint)
+        for endpoint in ENDPOINTS
+    }
     for group in OPENAPI_ENDPOINTS:
-        manifest["endpoints"][f"{group.provider}/{group.name}"] = (
-            snapshot_openapi(group)
-        )
-    write_json(MANIFEST, manifest)
-    for name, entry in manifest["endpoints"].items():
+        endpoints[f"{group.provider}/{group.name}"] = snapshot_openapi(group)
+    write_json(MANIFEST, {"endpoints": endpoints})
+    for name, entry in endpoints.items():
         sys.stdout.write(
             f"{name}: {entry['responses']} responses, "
             f"{entry.get('events', 0)} events, "
@@ -1085,4 +988,4 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()

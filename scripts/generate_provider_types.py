@@ -14,9 +14,9 @@ OpenAI's types come from its official OpenAPI file at the commit of
 ``OPENAI_OPENAPI_SHA256`` (the file of the contract snapshot,
 ``tests/providers/contracts/manifest.json``, a test checks), or from the
 file ``OPENAI_OPENAPI`` names, which must be the same; restricted to
-``OPENAI_OPERATIONS``. Anthropic's come from the docs-lite contract
-snapshot in ``tests/providers/contracts/anthropic/messages`` and, for the
-Files API, which docs-lite does not cover, from
+``OPENAI_OPERATIONS``. Anthropic's come from the contract snapshot in
+``tests/providers/contracts/anthropic/messages``, derived from the
+pinned ``anthropic`` SDK, and, for the Files API, from
 ``tests/providers/contracts/sources/anthropic-files.openapi.json``, a
 transcription of Anthropic's API reference. To follow a new
 OpenAI file, refresh the contract snapshot from it and change the URL
