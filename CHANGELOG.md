@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.14.0] - 2026-11-20
+
+### Added
+
+- OpenAI's Responses API follows `openapi.yaml` at commit 76a4810: the request
+  takes `background_options` (`BackgroundOptionsParam`: `completion_window` and
+  `continuation_id`) for a `background: true` call, and a response has
+  `input_transformations` (`ReasoningInputTransformation`), the reasoning
+  inputs withheld from the model.
+
+### Changed
+
+- **Breaking:** the Anthropic types and request parameters follow the
+  `anthropic` 2.11.0 SDK, which renamed five error objects of the server tool
+  results: `BashCodeExecutionToolResultError`, `CodeExecutionToolResultError`,
+  `TextEditorCodeExecutionToolResultError`, `ToolSearchToolResultError` and
+  `WebSearchToolResultError` are now named with an `Object` suffix
+  (`CodeExecutionToolResultErrorObject`, ...), in `providers.anthropic.types`
+  and `providers.anthropic.methods.params`, and
+  `WebSearchToolRequestErrorParam` is now
+  `WebSearchToolRequestErrorObjectParam`. Their fields are unchanged. The
+  `model` literal lists `claude-fable-5-2` and `claude-mythos-5-2`, and a skill
+  id may be 128 characters long.
+
 ## [0.13.0] - 2026-11-19
 
 ### Added
@@ -1283,7 +1307,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/GrehBan/aiollm/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/GrehBan/aiollm/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/GrehBan/aiollm/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/GrehBan/aiollm/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/GrehBan/aiollm/compare/v0.11.2...v0.12.0
