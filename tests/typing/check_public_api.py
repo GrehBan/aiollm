@@ -377,6 +377,18 @@ class WrongRequest(BaseUseCase[Model, GenerationResponse[str]]):  # type: ignore
         raise NotImplementedError
 
 
+def providers_are_open_values() -> None:
+    """A ``Provider`` is a ``str`` made from a name; the core lists none."""
+    echo = Provider("echo")
+    assert_type(echo, Provider)
+    assert_type(echo.value, str)
+    assert_type(Provider.GENERIC, Provider)
+    name: str = echo  # a Provider goes where a str does
+    del name
+    _ = Provider.OPENAI  # type: ignore[attr-defined]
+    Provider(1)  # type: ignore[arg-type]
+
+
 class TextAdapter(
     BaseAdapter[GenerationRequest, str, GenerationResponse[str]],
 ):

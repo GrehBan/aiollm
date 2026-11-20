@@ -67,9 +67,9 @@ class _ProviderAdapter(ABC):  # noqa: B024 - its subclasses are abstract
     """What every adapter has: the provider whose methods it builds.
 
     A concrete adapter must set ``provider``, so the shared results it
-    builds, and the errors of the requests it refuses, name it; an
-    adapter outside the library, whose provider ``Provider`` does not
-    list, sets ``Provider.GENERIC``.
+    builds, and the errors of the requests it refuses, name it: the
+    ``PROVIDER`` its provider package declares, such as
+    ``Provider("echo")``.
 
     Attributes:
         provider: The provider whose methods the adapter builds.
@@ -94,8 +94,8 @@ class _ProviderAdapter(ABC):  # noqa: B024 - its subclasses are abstract
 
         if not isinstance(getattr(cls, "provider", None), Provider):
             message = (
-                f"{cls.__name__} must set provider to a Provider "
-                "(Provider.GENERIC for one the library does not list)"
+                f"{cls.__name__} must set provider to a Provider, "
+                'such as Provider("echo")'
             )
             raise TypeError(message)
 
@@ -109,7 +109,7 @@ class BaseAdapter[
 
     Example:
         >>> class ChatAdapter(BaseAdapter[GenerationRequest, Chat, Reply]):
-        ...     provider = Provider.GENERIC
+        ...     provider = Provider("chat")
         ...
         ...     def to_method(self, request):
         ...         return CreateChat(model=request.model, ...)
@@ -210,7 +210,7 @@ class BaseFilesAdapter[RawFileT, RawPageT](_ProviderAdapter):
 
     Example:
         >>> class ExampleFilesAdapter(BaseFilesAdapter[File, FilePage]):
-        ...     provider = Provider.GENERIC
+        ...     provider = Provider("example")
         ...
         ...     def to_retrieve_method(self, file_id):
         ...         return RetrieveFile(file_id=file_id)

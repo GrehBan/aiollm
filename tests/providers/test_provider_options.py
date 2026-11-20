@@ -30,6 +30,7 @@ from aiollm.providers.anthropic.types.options import (
     AnthropicGenerationOptions,
 )
 from aiollm.providers.openai.adapters import OpenAIGenerationAdapter
+from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.providers.openai.methods import CreateFile, CreateResponse
 from aiollm.providers.openai.types.options import (
     OpenAIFileOptions,
@@ -255,7 +256,7 @@ def test_with_options_leaves_the_adapter_as_it_is() -> None:
 
 def test_checked_options_copies_the_known_keys() -> None:
     given = {"store": True}
-    checked = checked_options(given, OpenAIGenerationOptions, Provider.OPENAI)
+    checked = checked_options(given, OpenAIGenerationOptions, OPENAI_PROVIDER)
 
     assert checked == given
     assert checked is not given
@@ -263,14 +264,14 @@ def test_checked_options_copies_the_known_keys() -> None:
 
 def test_checked_options_refuses_anything_but_a_mapping() -> None:
     with pytest.raises(RequestValidationError, match="not list") as caught:
-        checked_options([], OpenAIGenerationOptions, Provider.OPENAI)
+        checked_options([], OpenAIGenerationOptions, OPENAI_PROVIDER)
 
     assert caught.value.field == "provider_options"
 
 
 def test_checked_options_needs_a_typed_dict() -> None:
     with pytest.raises(TypeError, match="not a TypedDict"):
-        checked_options({}, dict, Provider.OPENAI)
+        checked_options({}, dict, OPENAI_PROVIDER)
 
 
 def test_no_provider_options_takes_no_key() -> None:

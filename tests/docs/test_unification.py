@@ -17,7 +17,9 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 import aiollm
-from aiollm.enums import IncompleteReason, Provider, Role, ToolChoice
+from aiollm.enums import IncompleteReason, Role, ToolChoice
+from aiollm.providers.anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
+from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.exceptions import RequestValidationError
 from aiollm.providers.anthropic import AnthropicClient
 from aiollm.providers.anthropic.adapters import (
@@ -81,13 +83,13 @@ CALL = ToolCall(id="call_1", name="f", arguments="{}")
 
 TURNS = [Turn.user("Hi"), Turn.assistant("Hello")]
 
-OPENAI_FILE = ProviderFile(provider=Provider.OPENAI, id="file-abc123")
+OPENAI_FILE = ProviderFile(provider=OPENAI_PROVIDER, id="file-abc123")
 """A file OpenAI stores."""
 
 PARTS = (TextPart, ImagePart, DocumentPart)
 """The parts of a turn, which the input conversion converts."""
 
-PROVIDERS = {Provider.OPENAI: "OpenAI", Provider.ANTHROPIC: "Anthropic"}
+PROVIDERS = {OPENAI_PROVIDER: "OpenAI", ANTHROPIC_PROVIDER: "Anthropic"}
 """How the error table names each provider."""
 
 
@@ -264,7 +266,7 @@ def anthropic_method(**changes: Any) -> Callable[[], object]:
 def text_less_turn() -> object:
     """Turn a response without text into a turn."""
     response = GenerationResponse[Any](
-        provider=Provider.OPENAI, model="m", raw={}
+        provider=OPENAI_PROVIDER, model="m", raw={}
     )
     return response.to_turn()
 
@@ -327,7 +329,7 @@ SYNC_CASES: dict[str, Callable[[], object]] = {
     ),
     "turn-from-response-without-text": text_less_turn,
     "turn-from-response-cut-mid-call": lambda: GenerationResponse[Any](
-        provider=Provider.OPENAI,
+        provider=OPENAI_PROVIDER,
         model="m",
         tool_calls=[CALL],
         incomplete_reason=IncompleteReason.MAX_TOKENS,

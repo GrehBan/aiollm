@@ -24,7 +24,9 @@ from aiollm.providers.anthropic import (
     AnthropicClient,
     AnthropicErrorResolver,
 )
+from aiollm.providers.anthropic.api import PROVIDER as ANTHROPIC_PROVIDER
 from aiollm.providers.openai.api import OPENAI_API
+from aiollm.providers.openai.api import PROVIDER as OPENAI_PROVIDER
 from aiollm.providers.openai.client import OpenAIClient
 from aiollm.providers.openai.resolver import OpenAIErrorResolver
 from aiollm.session.aiohttp import AiohttpSession
@@ -58,7 +60,7 @@ class ClientCase:
 
 OPENAI = ClientCase(
     client=OpenAIClient,
-    provider=Provider.OPENAI,
+    provider=OPENAI_PROVIDER,
     api=OPENAI_API,
     url=("/models", "https://api.openai.com/v1/models"),
     resolver=OpenAIErrorResolver,
@@ -69,7 +71,7 @@ OPENAI = ClientCase(
 
 ANTHROPIC = ClientCase(
     client=AnthropicClient,
-    provider=Provider.ANTHROPIC,
+    provider=ANTHROPIC_PROVIDER,
     api=ANTHROPIC_API,
     url=("/messages", "https://api.anthropic.com/v1/messages"),
     resolver=AnthropicErrorResolver,
@@ -92,7 +94,7 @@ def test_client_from_a_token_outside_a_coroutine(case: ClientCase) -> None:
     assert session.api is case.api
     assert session.auth == BearerAuth(TEST_TOKEN)
     assert type(session.error_resolver) is case.resolver
-    assert case.client.provider is case.provider
+    assert case.client.provider == case.provider
 
 
 def test_api_url(case: ClientCase) -> None:

@@ -12,7 +12,7 @@ work and the checks that make a provider complete.
 
 ## 0. Agree first
 
-Adding a provider extends the closed `Provider` enum and the public surface:
+Adding a provider adds a package and its public surface:
 propose it (`change-proposal`) with what upstream offers (from its
 official OpenAPI file, SDK types and API reference), the auth scheme, error
 format and stream format, and which shared resources it will support. Code starts on the owner's go.
@@ -20,7 +20,7 @@ format and stream format, and which shared resources it will support. Code start
 ## 1. Package skeleton (`src/aiollm/providers/<name>/`)
 
 1. `api.py`: `BaseAPI(base_url, version)` and `PROVIDER: Final =
-   Provider.<NAME>`; add the member to `Provider` in `enums.py`.
+   Provider("<name>")` (an open value: nothing changes in `enums.py`).
 2. `resolver.py`: `BaseErrorResolver` subclass with `provider = PROVIDER`,
    `error_statuses` (in-band code/type → status), `get_error_code` or
    `classify_status` for codes such as quota vs rate limit; in-band failures

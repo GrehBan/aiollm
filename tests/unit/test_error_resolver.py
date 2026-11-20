@@ -23,6 +23,8 @@ from aiollm.http.exceptions.status import (
 from aiollm.http.headers import get_header, parse_retry_after
 from tests.conftest import NOW
 
+OPENAI_PROVIDER = Provider("openai")
+
 
 @pytest.mark.parametrize(
     ("value", "expected"),
@@ -335,13 +337,13 @@ def test_529_is_left_to_the_provider_resolver() -> None:
 
     assert type(error) is APIStatusError
     assert error.transient is False
-    assert error.provider is Provider.GENERIC
+    assert error.provider == Provider.GENERIC
 
 
 class ExampleErrorResolver(BaseErrorResolver):
     """The subclass from the README's error-handling section."""
 
-    provider = Provider.OPENAI
+    provider = OPENAI_PROVIDER
     error_statuses = {"insufficient_quota": 429}
 
     def classify_status(
@@ -381,7 +383,7 @@ def test_subclass_classify_override() -> None:
     )
 
     assert type(error) is QuotaExceededError
-    assert error.provider == Provider.OPENAI
+    assert error.provider == OPENAI_PROVIDER
     assert error.transient is False
 
 
@@ -393,7 +395,7 @@ def test_subclass_falls_back_to_default_classify() -> None:
     )
 
     assert type(error) is RateLimitError
-    assert error.provider == Provider.OPENAI
+    assert error.provider == OPENAI_PROVIDER
 
 
 def test_subclass_get_error_code_override() -> None:

@@ -32,7 +32,7 @@ Two rules decide what is shared:
 | Shared field | OpenAI | Anthropic | Lost, or when it raises |
 | --- | --- | --- | --- |
 | `GenerationResponse.id` | `id` | `id` | — |
-| `GenerationResponse.provider` | `Provider.OPENAI` | `Provider.ANTHROPIC` | — |
+| `GenerationResponse.provider` | `Provider("openai")` | `Provider("anthropic")` | — |
 | `GenerationResponse.model` | `model` | `model` | — |
 | `GenerationResponse.text` | The `output_text` parts of the `message` items, joined (as the SDKs' `output_text`) | The `text` blocks, joined | `None` without text. Annotations, citations, encrypted or raw reasoning and tool calls stay in `raw`. |
 | `GenerationResponse.usage` | `usage`, see [Token usage](#token-usage) | `usage`, see [Token usage](#token-usage) | `None` if OpenAI sends no usage. |
@@ -84,7 +84,7 @@ Two rules decide what is shared:
 | --- | --- | --- | --- |
 | `FileUpload.file` | `file` | `file` | The multipart part's `filename` is the name the provider keeps. OpenAI's `purpose` is a provider option, `user_data` (a model's input) when not given. |
 | `FileUpload.expires_in_seconds` | `expires_after`: `{"anchor": "created_at", "seconds": ...}`, 3600 to 2 592 000 | `expires_in_seconds`, 3600 to 7 776 000 | Positive; outside the provider's range raises `RequestValidationError`. Not sent when not given, so the file is kept until it is deleted. |
-| `ProviderFile.provider` | `Provider.OPENAI` | `Provider.ANTHROPIC` | The provider that stores the file. |
+| `ProviderFile.provider` | `Provider("openai")` | `Provider("anthropic")` | The provider that stores the file. |
 | `ProviderFile.id` | `id` | `id` | Not empty. An id reaches every file of the project or workspace: never build one from an end user's input. |
 | `StoredFile.ref` | `id`, with the provider | `id`, with the provider | — |
 | `StoredFile.filename` | `filename` | `filename` | — |
@@ -138,7 +138,7 @@ Server tool use, service tier, speed and inference region (Anthropic) and tool u
 | --- | --- | --- | --- |
 | `CompletedEvent.type` | `GenerationEventType.COMPLETED` | `GenerationEventType.COMPLETED` | — |
 | `CompletedEvent.id` | `response.id` of the terminal event | `message.id` of `message_start` | — |
-| `CompletedEvent.provider` | `Provider.OPENAI` | `Provider.ANTHROPIC` | The adapter's `provider`, as for `GenerationResponse.provider`. |
+| `CompletedEvent.provider` | `Provider("openai")` | `Provider("anthropic")` | The adapter's `provider`, as for `GenerationResponse.provider`. |
 | `CompletedEvent.model` | `response.model` of the terminal event | `message.model` of `message_start` | A stream without `message_start` raises `APIResponseError`. |
 | `CompletedEvent.text` | As `GenerationResponse.text`, from the event's `response` | The `text_delta`s joined | `None` without text. |
 | `CompletedEvent.usage` | As `GenerationResponse.usage`, from the event's `response` | As `GenerationResponse.usage` | — |
