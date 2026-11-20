@@ -20,11 +20,13 @@ A pin that is behind is moved (OpenAI's URL and SHA-256; Anthropic's pin,
 ``uv.lock`` and ``ANTHROPIC_VERSION`` from the new SDK), then the contract
 snapshot is rebuilt and the provider types regenerated, so the working
 tree holds the whole change for a pull request; ``DIR/pull-request.md``
-describes it. A changed page is not followed automatically, since the
-transcription is written by hand: it is listed in ``DIR/issue.md`` for
-someone to compare with the transcription, who then runs this script
-with ``--update-pages``. Under GitHub Actions
-the outputs ``pins`` and ``pages`` say whether each file was written.
+describes it, with the public names the new types add or remove against
+``tests/unit/public_api.json``, which a person updates. A changed page
+is not followed automatically, since the transcription is written by
+hand: it is listed in ``DIR/issue.md`` for someone to compare with the
+transcription, who then runs this script with ``--update-pages``. Under
+GitHub Actions the outputs ``pins`` and ``pages`` say whether each file
+was written.
 """
 
 from __future__ import annotations
@@ -48,6 +50,14 @@ PYPROJECT: Final = ROOT / "pyproject.toml"
 SOURCES: Final = ROOT / "tests" / "providers" / "contracts" / "sources"
 FILES_SPEC: Final = SOURCES / "anthropic-files.openapi.json"
 PAGES: Final = SOURCES / "anthropic-files.pages.json"
+PUBLIC_API: Final = ROOT / "tests" / "unit" / "public_api.json"
+
+EXPORTS: Final = (
+    "import importlib, json, sys; "
+    "print(json.dumps({n: importlib.import_module(n).__all__ "
+    "for n in sys.argv[1:]}))"
+)
+"""Prints the ``__all__`` of the packages named on the command line."""
 
 OPENAI_REPOSITORY: Final = "openai/openai-openapi"
 """Repository of OpenAI's OpenAPI file."""
@@ -221,6 +231,71 @@ def follow_anthropic() -> Change | None:
     )
 
 
+@dataclass(frozen=True)
+class Names:
+    """The public names of a package that differ from the snapshot.
+
+    Attributes:
+        package: The package.
+        added: Names it exports that the snapshot lacks.
+        removed: Names of the snapshot it no longer exports.
+    """
+
+    package: str
+    added: list[str]
+    removed: list[str]
+
+
+def public_names() -> list[Names]:
+    """Compare the exported names with ``tests/unit/public_api.json``.
+
+    The packages are imported in a new interpreter, so the names read
+    are those of the types just regenerated.
+
+    Returns:
+        One entry per package whose names differ.
+    """
+    snapshot: dict[str, list[str]] = json.loads(
+        PUBLIC_API.read_text(encoding="utf-8")
+    )
+    current: dict[str, list[str]] = json.loads(
+        run("uv", "run", "python", "-c", EXPORTS, *snapshot)
+    )
+    return [
+        Names(
+            package=package,
+            added=sorted(set(current[package]) - set(names)),
+            removed=sorted(set(names) - set(current[package])),
+        )
+        for package, names in snapshot.items()
+        if set(current[package]) != set(names)
+    ]
+
+
+def names_section(names: list[Names]) -> str:
+    """Describe the changed public names for the pull request.
+
+    Args:
+        names: The packages whose names differ.
+
+    Returns:
+        A Markdown section.
+    """
+    if not names:
+        return "No public name is added or removed.\n"
+    lines = [
+        "The public names differ from `tests/unit/public_api.json`, so",
+        "`test_the_public_api_matches_its_snapshot` fails until it is",
+        "updated; a removed or renamed name is a breaking change:",
+        "",
+    ]
+    for entry in names:
+        lines.append(f"- `{entry.package}`")
+        lines.extend(f"  - added `{name}`" for name in entry.added)
+        lines.extend(f"  - removed `{name}`" for name in entry.removed)
+    return "\n".join(lines) + "\n"
+
+
 def page_hashes() -> dict[str, str]:
     """Hash the Markdown of every page the Files transcription follows.
 
@@ -282,6 +357,7 @@ pull request moves the pins, rebuilds the contract snapshot
 (`tests/providers/contracts/`) and regenerates the provider types.
 
 {table}
+{names}
 Before merging, read the diff of the snapshot and of `src/aiollm/providers`:
 
 - a field, type or event that was removed or narrowed is a breaking
@@ -374,7 +450,9 @@ def main() -> None:
                 **env,
             )
             run("uv", "run", "python", str(SCRIPT), **env)
-            body = PULL_REQUEST.format(table=table(pins))
+            body = PULL_REQUEST.format(
+                table=table(pins), names=names_section(public_names())
+            )
             (out / "pull-request.md").write_text(body, encoding="utf-8")
 
     pages = changed_pages(hashes)
