@@ -1,4 +1,4 @@
-"""Self-checks of the shared doubles in ``conftest.py``.
+"""Self-checks of the doubles and fixtures of ``aiollm.testing``.
 
 They only prove the infrastructure works; behavior of the library is
 tested by the stage suites.
@@ -23,15 +23,15 @@ from aiollm.http.exceptions.transport import APIConnectionError
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
 from aiollm.response.buffered import BufferedResponse
 from aiollm.session.aiohttp import AiohttpSession
-from tests.conftest import (
+from aiollm.testing import (
     TEST_TOKEN,
     FakeStreamResponse,
     FakeTransport,
     LocalAPI,
-    Recorder,
     Reply,
     make_method,
 )
+from aiollm.testing.aiohttp import Recorder
 
 
 async def test_retry_wait_is_instant_and_records_outcomes(
@@ -198,3 +198,63 @@ async def test_default_reply_answers_once_the_script_is_exhausted(
 
     assert bodies == [b"first", b"default", b"default"]
     assert own.unscripted == []
+
+
+def test_fake_stream_response_needs_both_fail_at_and_error() -> None:
+    with pytest.raises(ValueError, match="go together"):
+        FakeStreamResponse([b"a"], fail_at=0)
+
+
+def test_the_plugin_works_in_another_project(
+    pytester: pytest.Pytester,
+) -> None:
+    # A provider's own suite: strict asyncio mode, no fixture overridden.
+    pytester.makeconftest('pytest_plugins = ["aiollm.testing.plugin"]')
+    pytester.makeini(
+        "[pytest]\n"
+        "asyncio_mode = strict\n"
+        "asyncio_default_fixture_loop_scope = function\n"
+    )
+    pytester.makepyfile(
+        """
+        import os
+
+        import pytest
+
+        from aiollm.methods.base import BaseAPIMethod
+        from aiollm.response.buffered import BufferedResponse
+        from aiollm.testing import Reply, make_method
+
+
+        def test_keeps_the_environment(provider_key_envs):
+            assert provider_key_envs == ()
+
+
+        @pytest.mark.asyncio
+        async def test_fake_transport(fake_transport):
+            fake_transport.responses.append(BufferedResponse(200, {}, b"ok"))
+            method = make_method(BaseAPIMethod[bytes])()
+
+            assert await fake_transport.send_request(method) == b"ok"
+
+
+        @pytest.mark.asyncio
+        async def test_local_server(session, recorder):
+            recorder.reply(Reply(body=b"pong"))
+            method = make_method(BaseAPIMethod[bytes])()
+
+            assert await session.send_request(method) == b"pong"
+
+
+        @pytest.mark.asyncio
+        async def test_unscripted(session, recorder):
+            await session.send_request(make_method(BaseAPIMethod[None])())
+        """
+    )
+
+    result = pytester.runpytest(
+        "-p", "no:cacheprovider", "-o", "asyncio_mode=strict"
+    )
+
+    result.assert_outcomes(passed=3, failed=1, errors=1)
+    assert "unscripted requests: ['POST /v1/test']" in result.stdout.str()

@@ -20,7 +20,7 @@ from aiollm import (
 )
 from aiollm.adapters.validation import check_files
 from aiollm.resources.files import FilesResource
-from tests.conftest import FakeTransport
+from aiollm.testing import FakeTransport
 
 ALPHA = Provider("alpha")
 BETA = Provider("beta")

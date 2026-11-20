@@ -79,6 +79,14 @@ path = "src/aiollm/__meta__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/aiollm"]
 
+[project.optional-dependencies]
+# aiollm.testing's pytest plugin and its local server (aiollm.testing.aiohttp).
+testing = [
+    "pytest>=9.2.0",
+    "pytest-aiohttp>=1.1.1",
+    "pytest-asyncio>=1.4.1",
+]
+
 [dependency-groups]
 # The generator of the provider types, at the commit they were made with;
 # scripts/generate_provider_types.py runs it (CONTRIBUTING.md).

@@ -18,6 +18,8 @@ from aiollm.http.exceptions.status import ServiceUnavailableError
 from aiollm.http.exceptions.transport import APIRequestError
 from aiollm.methods.base import BaseAPIMethod
 from aiollm.session.aiohttp import AiohttpSession
+from aiollm.testing import RecordedPart, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.files import (
     DEFAULT_CHUNK_SIZE,
     BytesFile,
@@ -26,7 +28,6 @@ from aiollm.types.files import (
     PathFile,
     StreamFile,
 )
-from tests.conftest import RecordedPart, Recorder, Reply
 
 pytestmark = pytest.mark.integration
 

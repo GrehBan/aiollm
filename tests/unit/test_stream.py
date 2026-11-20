@@ -23,7 +23,7 @@ from aiollm.methods.base import BaseStreamMethod
 from aiollm.response.parse.stream import StreamResponseParser
 from aiollm.response.stream import Stream, map_stream, transform_stream
 from aiollm.serialization.json import loads
-from tests.conftest import FakeStreamResponse, make_method
+from aiollm.testing import FakeStreamResponse, make_method
 
 
 def parse(

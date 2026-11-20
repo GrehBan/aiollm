@@ -22,8 +22,9 @@ from aiollm.session.aiohttp import AiohttpSession, AiohttpSessionOptions
 from aiollm.session.base import BaseSession
 from aiollm.session.protocols import CallOptions, ISession
 from aiollm.session.retry import RetryPolicy
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.requests import GenerationRequest
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 from tests.providers.test_openai_responses import RESPONSE, STREAM, frame
 
 MODEL = "gpt-6-astra"

@@ -18,9 +18,9 @@ from aiollm.methods.base import BaseAPIMethod
 from aiollm.methods.fields import has_one_shot_file
 from aiollm.serialization.traversal import MAX_DEPTH
 from aiollm.serialization.values import BaseValueFormatter
+from aiollm.testing import make_method
 from aiollm.types.base import BaseAPIType
 from aiollm.types.files import BytesFile, InputFile, IOFile, StreamFile
-from tests.conftest import make_method
 
 
 class Order(enum.StrEnum):

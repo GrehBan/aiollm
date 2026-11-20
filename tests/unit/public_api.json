@@ -1158,6 +1158,19 @@
     "RetryPolicy",
     "RetryState"
   ],
+  "aiollm.testing": [
+    "Chunk",
+    "FakeStreamResponse",
+    "FakeTransport",
+    "LocalAPI",
+    "NOW",
+    "Outcome",
+    "RecordedPart",
+    "RecordedRequest",
+    "Reply",
+    "TEST_TOKEN",
+    "make_method"
+  ],
   "aiollm.types": [
     "AnyOf",
     "BaseAPIType",

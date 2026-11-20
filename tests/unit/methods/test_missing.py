@@ -29,8 +29,8 @@ from aiollm.methods.base import BaseAPIMethod
 from aiollm.methods.fields import names_missing
 from aiollm.serialization.normalize import BodyNormalizer
 from aiollm.serialization.values import BaseValueFormatter
+from aiollm.testing import make_method
 from aiollm.types.base import BaseAPIType
-from tests.conftest import make_method
 
 if TYPE_CHECKING:
     from decimal import Decimal

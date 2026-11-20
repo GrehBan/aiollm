@@ -31,9 +31,9 @@ from aiollm.http.exceptions.transport import (
 )
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
 from aiollm.session.aiohttp import AiohttpSession
+from aiollm.testing import TEST_TOKEN, LocalAPI
 from aiollm.types.base import BaseAPIType
 from aiollm.types.files import IOFile, PathFile, StreamFile
-from tests.conftest import TEST_TOKEN, LocalAPI
 
 pytestmark = pytest.mark.integration
 

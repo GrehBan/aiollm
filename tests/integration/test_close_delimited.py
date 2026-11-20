@@ -23,9 +23,9 @@ from aiollm.http.exceptions.resolver import BaseErrorResolver
 from aiollm.http.exceptions.transport import APIStreamInterruptedError
 from aiollm.methods.base import BaseStreamMethod
 from aiollm.session.aiohttp import AiohttpSession
+from aiollm.testing import TEST_TOKEN, LocalAPI
 from aiollm.types.base import BaseAPIType
 from aiollm.types.matchers import EventTypes
-from tests.conftest import TEST_TOKEN, LocalAPI
 
 pytestmark = pytest.mark.integration
 

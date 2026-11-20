@@ -42,7 +42,8 @@ from aiollm.providers.openai.client import session_factory
 from aiollm.session.aiohttp import AiohttpSession
 from aiollm.types.base import BaseAPIType
 from aiollm.types.requests import GenerationRequest
-from tests.conftest import LocalAPI, Recorder, Reply
+from aiollm.testing import LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from tests.providers.test_generation_contract import (
     OPENAI,
     openai_called_stream,

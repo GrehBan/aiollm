@@ -56,7 +56,8 @@ from aiollm.types.responses import (
 )
 from aiollm.types.files import BytesFile
 from aiollm.types.requests import ToolCall
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from tests.providers import test_anthropic_messages as anthropic
 from tests.providers import test_openai_responses as openai
 

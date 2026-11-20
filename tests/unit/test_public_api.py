@@ -34,6 +34,7 @@ PACKAGES = [
     "aiollm.session",
     "aiollm.session.body",
     "aiollm.session.retry",
+    "aiollm.testing",
     "aiollm.types",
     "aiollm.types.requests",
     "aiollm.types.responses",
@@ -77,8 +78,14 @@ def test_root_reexports_the_error_tree() -> None:
     assert errors <= set(aiollm.__all__)
 
 
-def test_importing_the_root_does_not_import_a_transport() -> None:
-    code = "import sys, aiollm; print('aiohttp' in sys.modules)"
+@pytest.mark.parametrize("package", ["aiollm", "aiollm.testing"])
+def test_importing_a_package_imports_no_transport_and_no_pytest(
+    package: str,
+) -> None:
+    code = (
+        f"import sys, {package}; "
+        "print(sorted({'aiohttp', 'pytest'} & set(sys.modules)))"
+    )
 
     result = subprocess.run(  # noqa: S603 - fixed command
         [sys.executable, "-c", code],
@@ -87,4 +94,4 @@ def test_importing_the_root_does_not_import_a_transport() -> None:
         text=True,
     )
 
-    assert result.stdout.strip() == "False"
+    assert result.stdout.strip() == "[]"

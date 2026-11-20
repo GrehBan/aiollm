@@ -136,7 +136,7 @@ uv run pytest --mypy -m mypy tests/typing
 What the tests expect from a change:
 
 - **Coverage stays at 100 %** of lines and branches in practice (the configured floor is 98 %).
-- **No real API.** Network tests run against the local `Recorder` server from `tests/conftest.py`, which answers only what a test scripted and fails the test on any other request, so a hidden retry cannot pass. API keys from your environment are cleared for every test.
+- **No real API.** Network tests run against the local `Recorder` server of `aiollm.testing` (its fixtures come from the `aiollm.testing.plugin` that `tests/conftest.py` loads), which answers only what a test scripted and fails the test on any other request, so a hidden retry cannot pass. API keys from your environment are cleared for every test.
 - **No sleeps.** Wait for an event or a condition, not for time to pass.
 - **Every supported Python.** CI runs the tests on CPython 3.13, 3.14 and 3.15, on Linux and Windows. To try another version locally with uv, run `UV_PYTHON=3.15 uv run --all-groups pytest` (it rebuilds `.venv` for that version; run `uv sync --all-groups` to go back).
 

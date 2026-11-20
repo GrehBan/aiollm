@@ -1,10 +1,10 @@
 """Packages import only from the layers below them (CLAUDE.md).
 
 The order is core → data and HTTP primitives → methods → response →
-session → client → adapters → resources → providers. The exceptions are
-the ones ``CLAUDE.md`` names: ``methods/base.py`` imports the default
-parsers, and protocols that refer to each other import under
-``TYPE_CHECKING``. Transport modules are never imported from an
+session → client → adapters → resources → providers → testing. The
+exceptions are the ones ``CLAUDE.md`` names: ``methods/base.py``
+imports the default parsers, and protocols that refer to each other
+import under ``TYPE_CHECKING``. Transport modules are never imported from an
 ``__init__.py``, except a provider package's. The core imports no
 provider package, and its infrastructure (everything but the shared
 generation and files layer and the providers) does not import that
@@ -37,6 +37,7 @@ LAYERS = {
     "adapters": 6,
     "resources": 7,
     "providers": 8,
+    "testing": 9,
 }
 """The layer of each top-level package or module of ``aiollm``."""
 

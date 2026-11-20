@@ -32,8 +32,9 @@ from aiollm.http.headers import Headers
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
 from aiollm.session.aiohttp import AiohttpSession
 from aiollm.session.loop import bind_loop
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.files import IOFile, PathFile, StreamFile
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 
 pytestmark = pytest.mark.integration
 

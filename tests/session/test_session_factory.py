@@ -8,7 +8,7 @@ from aiollm.http.auth import BearerAuth
 from aiollm.providers.openai.api import OPENAI_API
 from aiollm.providers.openai.resolver import OpenAIErrorResolver
 from aiollm.session.factory import SessionFactory
-from tests.conftest import FakeTransport
+from aiollm.testing import FakeTransport
 
 
 def test_factory_turns_a_token_into_auth_and_forwards_arguments() -> None:

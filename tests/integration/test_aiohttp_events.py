@@ -17,8 +17,9 @@ from aiollm.http.exceptions.status import APIStatusError
 from aiollm.methods.base import BaseAPIMethod, BaseStreamMethod
 from aiollm.response.parse.sse import ServerSentEvent
 from aiollm.session.aiohttp import AiohttpSession
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.base import BaseAPIType
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 
 pytestmark = pytest.mark.integration
 

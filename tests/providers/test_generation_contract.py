@@ -48,6 +48,8 @@ from aiollm.response.stream import Stream
 from aiollm.session.factory import SessionFactory
 from aiollm.session.protocols import ISession
 from aiollm.session.retry import RetryPolicy
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.requests import (
     DocumentPart,
     ForcedTool,
@@ -70,7 +72,6 @@ from aiollm.types.responses import (
     ToolCallDoneEvent,
     ToolCallStartEvent,
 )
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 from tests.providers import test_anthropic_messages as anthropic
 from tests.providers import test_openai_responses as openai
 

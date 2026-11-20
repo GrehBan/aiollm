@@ -26,6 +26,10 @@ A provider package stands on a fixed set of names of the core, its extension API
 
 The core never imports a provider, and the core's infrastructure (HTTP, methods, responses, sessions and clients) does not import the shared generation and files layer (`types.requests`, `types.responses`, adapters and resources); `tests/unit/test_layers.py` checks both.
 
+### Testing a provider
+
+`aiollm.testing` is the kit the library's own tests use, installed with the package's `testing` extra: `FakeTransport` replays queued responses through the real `BaseSession`, so retries, error mapping and parsing run as in production, and `Recorder` (in `aiollm.testing.aiohttp`) is a local server that answers only what a test scripted with `Reply` and fails the test on any other request. Load the fixtures in a `conftest.py` with `pytest_plugins = ["aiollm.testing.plugin"]`: it makes retries instant and `AiohttpSession.close()` immediate in every test, clears the environment variables your `provider_key_envs` fixture names, and gives `recorder`, `server`, `api` and `session` for the local server, `fake_transport` and `frozen_now`. The plugin is not registered on install, so a project that does not load it keeps its own behaviour.
+
 ## Writing a transport
 
 `BaseSession` holds everything that doesn't depend on the HTTP client: retries, error mapping, parsing and stream cleanup. A transport subclasses it and implements three methods:

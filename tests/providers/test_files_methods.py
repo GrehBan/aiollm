@@ -28,8 +28,9 @@ from aiollm.providers.openai import OpenAIClient
 from aiollm.providers.openai import methods as openai
 from aiollm.providers.openai.client import session_factory as openai_factory
 from aiollm.providers.openai.methods.params import FileExpirationAfter
+from aiollm.testing import TEST_TOKEN, LocalAPI, Reply
+from aiollm.testing.aiohttp import Recorder
 from aiollm.types.files import BytesFile
-from tests.conftest import TEST_TOKEN, LocalAPI, Recorder, Reply
 
 CONTRACTS = Path(__file__).parent / "contracts"
 

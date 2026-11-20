@@ -21,7 +21,7 @@ from aiollm.http.exceptions.status import (
     ServiceUnavailableError,
 )
 from aiollm.http.headers import get_header, parse_retry_after
-from tests.conftest import NOW
+from aiollm.testing import NOW
 
 OPENAI_PROVIDER = Provider("openai")
 
