@@ -4,6 +4,9 @@ on:
   push:
     branches: [master]
   pull_request:
+    # labeled/unlabeled too, so a "no changelog" label added after the
+    # pull request opened reaches the changelog check.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read

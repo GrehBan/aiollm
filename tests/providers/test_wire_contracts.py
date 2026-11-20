@@ -396,6 +396,9 @@ def test_the_snapshot_has_examples() -> None:
         assert examples(case, "events.json")
         assert entry["responses"] == len(examples(case, "responses.json"))
         assert entry["events"] == len(examples(case, "events.json"))
+        # A refresh keeps an example its new schema refuses and lists it
+        # here, so it is fixed or removed by hand, never dropped.
+        assert entry["rejected"] == []
 
 
 FULL_REQUEST = GenerationRequest(
