@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.15.0] - 2026-11-20
+
+### Added
+
+- The checks an adapter runs on a shared request, `checked_options`,
+  `merge_options`, `request_errors`, `check_conversation` and `check_files`,
+  are exported from `aiollm.adapters`, so a provider written outside the
+  library takes them from a public package. The
+  [Extending](https://aiollm-org.github.io/aiollm/guide/extending/) guide
+  lists the names of the core a provider package may build on.
+- `aiollm.testing` runs a provider of your own through the scenarios every
+  library provider passes: subclass `GenerationContract`, `FilesContract` and
+  `ClientContract` (`aiollm.testing.contract`) with a case of your wire format.
+  `aiollm.testing.extension.check_extension_api` lists the imports of a
+  package outside the extension API (now `aiollm/testing/extension_api.json`),
+  `aiollm.testing.wire` compares generated models with a snapshot of the
+  upstream schemas, and `aiollm.testing.echo` is a whole provider built from
+  the extension API alone, for an API that exists only on the local server;
+  its `EchoClient` types the arguments of its session, as a provider client
+  does. The `testing` extra now installs `jsonschema` too.
+- `aiollm.testing`, the test kit the library's own tests use, for code built
+  on aiollm, such as a provider of your own: `FakeTransport` replays queued
+  responses through the real session, `Recorder` (in `aiollm.testing.aiohttp`)
+  is a local server that answers only what a test scripted, and the pytest
+  plugin `aiollm.testing.plugin` gives their fixtures and makes retries
+  instant. Its dependencies come with the new `testing` extra.
+
+### Changed
+
+- **Breaking:** `Provider` is an open value instead of a closed enum, so a
+  provider written outside the library names itself and its files and errors
+  stay apart from another one's. It is a `str` made from the provider's name;
+  the library declares only `Provider.GENERIC`, and each provider package its
+  own `PROVIDER`. To migrate, write `aiollm_openai.api.PROVIDER` (or
+  `Provider("openai")`) for `Provider.OPENAI`,
+  `aiollm_anthropic.api.PROVIDER` (or `Provider("anthropic")`) for
+  `Provider.ANTHROPIC`, and `Provider("<name>")` for the `Provider.GENERIC` an
+  adapter or resolver of your own set; compare providers with `==`, not `is`.
+  `ANTHROPIC_VERSION`, the header name, moved from `aiollm.http.headers` to
+  `aiollm_anthropic.api`.
+- The project moved to the `aiollm-org` GitHub organization: the
+  repository is <https://github.com/aiollm-org/aiollm> and the
+  documentation is at <https://aiollm-org.github.io/aiollm/>. The old
+  `GrehBan/aiollm` addresses redirect, but the old documentation address
+  no longer opens.
+
+### Removed
+
+- **Breaking:** the providers left the core for packages of their own, in
+  repositories of their own, and the core's distribution is now named
+  `aiollm-core` (was `aiollm`; `import aiollm` is unchanged). To migrate,
+  install the provider you use and change its imports:
+  `aiollm.providers.openai` → `aiollm_openai` (distribution `aiollm-openai`),
+  `aiollm.providers.anthropic` → `aiollm_anthropic` (distribution
+  `aiollm-anthropic`). The modules under them keep their names
+  (`aiollm.providers.openai.methods` → `aiollm_openai.methods`), and a
+  provider package installs the core it needs. `ToolCall` left the extension
+  API as a name of `aiollm.types.responses.generation`: a provider takes it
+  from `aiollm.types.requests.generation`, where it is defined.
+
 ## [0.14.0] - 2026-11-20
 
 ### Added
@@ -1307,7 +1367,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/aiollm-org/aiollm/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/aiollm-org/aiollm/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/aiollm-org/aiollm/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/aiollm-org/aiollm/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/aiollm-org/aiollm/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/aiollm-org/aiollm/compare/v0.12.0...v0.12.1
