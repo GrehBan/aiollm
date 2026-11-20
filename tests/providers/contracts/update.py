@@ -13,9 +13,10 @@ reference.
 
 The examples (``responses.json``, ``events.json``) are kept in the
 repository: documented and recorded payloads, added by hand. A refresh
-checks each against the new schemas; one that fails is taken out and
-listed under ``rejected`` in ``manifest.json`` with the first error, so
-nothing is dropped silently.
+never changes them: it checks each against the new schemas and lists one
+that fails under ``rejected`` in ``manifest.json`` with the first error,
+and ``test_wire_contracts.py`` fails until it is fixed or removed by
+hand.
 
 Usage::
 
@@ -595,8 +596,7 @@ def snapshot(endpoint: Endpoint) -> dict[str, Any]:
     """Write the snapshot of one endpoint.
 
     The schemas are rebuilt from the endpoint's source; the examples
-    already in the folder are checked against them, and those that fail
-    are taken out.
+    already in the folder are checked against them and left as they are.
 
     Args:
         endpoint: The endpoint.
@@ -639,17 +639,14 @@ def snapshot(endpoint: Endpoint) -> dict[str, Any]:
     counts: dict[str, int] = {}
     rejected: list[dict[str, Any]] = []
     for group, validator in validators.items():
-        kept: list[dict[str, Any]] = []
-        for example in read_json(target / f"{group}.json"):
+        stored = read_json(target / f"{group}.json")
+        for example in stored:
             error = first_error(validator, example["body"])
-            if error is None:
-                kept.append(example)
-            else:
+            if error is not None:
                 rejected.append(
                     {"id": example["id"], "group": group, "error": error}
                 )
-        write_json(target / f"{group}.json", kept)
-        counts[group] = len(kept)
+        counts[group] = len(stored)
 
     return {**sources, **counts, "rejected": rejected}
 
