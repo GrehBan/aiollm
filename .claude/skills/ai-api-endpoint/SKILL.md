@@ -62,6 +62,8 @@ A defect in them is fixed in aiollm-codegen (its own project), then the
 pin in `pyproject.toml` moves to that commit (`uv lock`) and they are
 regenerated; CI fails when the committed files differ from a regeneration. `types/options.py` stays hand-written: its `TypedDict`s mirror
 the method fields (`test_provider_options.py`), so dict literals type-check.
+A new Anthropic SDK version changes the `upstream` pin, the snapshot and the
+generated types in one change (`test_codegen_pin.py` checks they agree).
 
 ## 4. Methods
 
