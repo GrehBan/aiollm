@@ -44,11 +44,11 @@ from aiollm.types.base import BaseAPIType
 from aiollm.types.requests import GenerationRequest
 from aiollm.testing import LocalAPI, Reply
 from aiollm.testing.aiohttp import Recorder
+from aiollm.testing.contract.generation import events as sse
 from tests.providers.test_generation_contract import (
     OPENAI,
     openai_called_stream,
 )
-from tests.providers.test_generation_contract import events as sse
 from tests.providers.test_openai_responses import RESPONSE as OPENAI_EXAMPLE
 
 ROOT = Path(__file__).parents[2]

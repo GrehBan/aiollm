@@ -1,114 +1,87 @@
 """The extension API: what a provider package may take from the core.
 
-``extension_api.json`` lists, by module, every name a provider package
-imports from ``aiollm``. A provider that takes a name outside it fails
-here, so a new name is added to the snapshot in the same change and
-shows in its diff; the core removes or changes a listed name only with a
-**Breaking** changelog fragment, since the provider packages stand on
-them. Provider packages do not import each other.
+``aiollm/testing/extension_api.json`` lists, by module, every name a
+provider package imports from ``aiollm``. A provider that takes a name
+outside it fails here (and, once it lives in its own repository, in its
+own ``check_extension_api`` test), so a new name is added to the
+snapshot in the same change and shows in its diff; the core removes or
+changes a listed name only with a **Breaking** changelog fragment, since
+the provider packages stand on them. Provider packages do not import
+each other. The echo provider of the test kit is held to it too.
 """
 
 from __future__ import annotations
 
 import ast
 import importlib
-import json
 from pathlib import Path
 
 import pytest
 
 import aiollm
-
-ROOT = Path(aiollm.__file__).parent / "providers"
-
-SNAPSHOT: dict[str, list[str]] = json.loads(
-    Path(__file__).with_name("extension_api.json").read_text(encoding="utf-8")
+from aiollm.testing.extension import (
+    EXTENSION_API,
+    check_extension_api,
+    outside_names,
 )
 
+ROOT = Path(aiollm.__file__).parent
 
-def outside_names(
-    package: str, source: str, allowed: dict[str, list[str]]
-) -> list[str]:
-    """The imports of a provider module that the extension API lacks.
-
-    Args:
-        package: The provider package the module belongs to, such as
-            ``aiollm.providers.openai``.
-        source: The module's source.
-        allowed: The extension API, by module.
-
-    Returns:
-        Each wrong import as ``line: module.name``.
-    """
-    wrong = []
-
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Import):
-            wrong += [
-                f"{node.lineno}: import {alias.name}"
-                for alias in node.names
-                if alias.name.startswith("aiollm")
-            ]
-        if not isinstance(node, ast.ImportFrom) or node.level:
-            continue
-        module = node.module or ""
-        if not module.startswith("aiollm.") or module.startswith(package):
-            continue
-        wrong += [
-            f"{node.lineno}: {module}.{alias.name}"
-            for alias in node.names
-            if module.startswith("aiollm.providers.")
-            or alias.name not in allowed.get(module, [])
-        ]
-
-    return wrong
+PROVIDERS = (
+    "aiollm.providers.anthropic",
+    "aiollm.providers.openai",
+    "aiollm.testing.echo",
+)
+"""Every provider package of this repository."""
 
 
-def provider_modules() -> list[tuple[str, Path]]:
-    """Every module of every provider package, with its package."""
-    return [
-        (f"aiollm.providers.{package.name}", path)
-        for package in sorted(ROOT.iterdir())
+def test_every_provider_package_is_checked() -> None:
+    found = {
+        f"aiollm.providers.{package.name}"
+        for package in (ROOT / "providers").iterdir()
         if (package / "__init__.py").exists()
-        for path in sorted(package.rglob("*.py"))
-    ]
+    }
+
+    assert found | {"aiollm.testing.echo"} == set(PROVIDERS)
 
 
 def test_the_snapshot_is_sorted() -> None:
-    assert list(SNAPSHOT) == sorted(SNAPSHOT)
-    assert all(names == sorted(set(names)) for names in SNAPSHOT.values())
+    assert list(EXTENSION_API) == sorted(EXTENSION_API)
+    assert all(
+        list(names) == sorted(set(names)) for names in EXTENSION_API.values()
+    )
 
 
-@pytest.mark.parametrize("module", SNAPSHOT)
+@pytest.mark.parametrize("module", EXTENSION_API)
 def test_every_listed_name_exists(module: str) -> None:
     imported = importlib.import_module(module)
 
-    assert [n for n in SNAPSHOT[module] if not hasattr(imported, n)] == []
+    assert [n for n in EXTENSION_API[module] if not hasattr(imported, n)] == []
 
 
-def test_providers_take_only_the_extension_api() -> None:
-    wrong = [
-        f"{path.relative_to(ROOT).as_posix()}:{found}"
-        for package, path in provider_modules()
-        for found in outside_names(
-            package, path.read_text(encoding="utf-8"), SNAPSHOT
-        )
-    ]
-
-    assert wrong == []
+@pytest.mark.parametrize("package", PROVIDERS)
+def test_providers_take_only_the_extension_api(package: str) -> None:
+    assert check_extension_api(package) == []
 
 
 def test_the_snapshot_lists_only_what_providers_take() -> None:
     # A name nobody takes is not part of the contract yet.
     taken = {
         (node.module, alias.name)
-        for _, path in provider_modules()
+        for package in PROVIDERS
+        for path in sorted(
+            Path(importlib.import_module(package).__file__ or "").parent.rglob(
+                "*.py"
+            )
+        )
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.ImportFrom) and node.module
         for alias in node.names
     }
     listed = {
-        (module, name) for module, names in SNAPSHOT.items() for name in names
+        (module, name)
+        for module, names in EXTENSION_API.items()
+        for name in names
     }
 
     assert listed - taken == set()
@@ -116,7 +89,8 @@ def test_the_snapshot_lists_only_what_providers_take() -> None:
 
 CASES = {
     "listed": ("from aiollm.enums import Provider", []),
-    "own-package": ("from aiollm.providers.openai.api import PROVIDER", []),
+    "own-package": ("from aiollm_openai.api import PROVIDER", []),
+    "own-package-itself": ("from aiollm_openai import PROVIDER", []),
     "relative": ("from .api import PROVIDER", []),
     "not-listed": (
         "from aiollm.enums import BodyFormat, Effort",
@@ -127,10 +101,20 @@ CASES = {
         ["1: aiollm.methods.fields.names_missing"],
     ),
     "another-provider": (
+        "from aiollm_anthropic.api import PROVIDER",
+        ["1: aiollm_anthropic.api.PROVIDER"],
+    ),
+    "a-provider-of-the-core": (
         "from aiollm.providers.anthropic.api import PROVIDER",
         ["1: aiollm.providers.anthropic.api.PROVIDER"],
     ),
     "plain-import": ("import aiollm.enums", ["1: import aiollm.enums"]),
+    "plain-import-of-another": (
+        "import aiollm_anthropic",
+        ["1: import aiollm_anthropic"],
+    ),
+    "plain-import-of-itself": ("import aiollm_openai.api", []),
+    "other-libraries": ("import json\nfrom pydantic import MISSING", []),
 }
 """Sources the check is tried on, and what it must report."""
 
@@ -140,4 +124,32 @@ def test_the_check_tells_what_is_allowed(case: str) -> None:
     source, found = CASES[case]
     allowed = {"aiollm.enums": ["BodyFormat", "Provider"]}
 
-    assert outside_names("aiollm.providers.openai", source, allowed) == found
+    assert outside_names("aiollm_openai", source, allowed) == found
+
+
+def test_a_package_is_checked_file_by_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "aiollm_example"
+    (package / "types").mkdir(parents=True)
+    (package / "__init__.py").write_text("from aiollm.enums import Effort\n")
+    (package / "types" / "__init__.py").write_text("")
+    (package / "types" / "base.py").write_text(
+        "from aiollm.enums import Provider\nimport aiollm_other\n"
+    )
+    monkeypatch.syspath_prepend(tmp_path)
+
+    assert check_extension_api("aiollm_example") == [
+        "__init__.py:1: aiollm.enums.Effort",
+        "types/base.py:2: import aiollm_other",
+    ]
+
+
+def test_a_package_without_files_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "aiollm_namespace").mkdir()
+    monkeypatch.syspath_prepend(tmp_path)
+
+    with pytest.raises(ValueError, match="no source files"):
+        check_extension_api("aiollm_namespace")

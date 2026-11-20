@@ -15,16 +15,12 @@ the library only once the snapshot is refreshed.
 from __future__ import annotations
 
 import importlib
-import inspect
 import json
 import pkgutil
-from collections.abc import Iterator
 from dataclasses import dataclass
-from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import (
-    Annotated,
     Any,
     Final,
     Literal,
@@ -57,7 +53,15 @@ from aiollm.response.parse.stream import StreamResponseParser
 from aiollm.session.aiohttp import AiohttpSession
 from aiollm.testing import Reply
 from aiollm.testing.aiohttp import Recorder
-from aiollm.types.base import BaseAPIType
+from aiollm.testing.wire import (
+    Snapshot,
+    allows_null,
+    errors,
+    field_problems,
+    naming_problems,
+    provider_models,
+    resolve,
+)
 from aiollm.types.matchers import AnyOf, EventTypes
 from aiollm.types.requests import (
     DocumentPart,
@@ -69,12 +73,62 @@ from aiollm.types.requests import (
     ToolResult,
     Turn,
 )
-from aiollm.types.unknown import BaseUnknown
 from tests.providers import test_anthropic_messages as anthropic
 from tests.providers import test_openai_responses as openai
 from tests.providers.contracts.update import event_tags, type_tags
 
 CONTRACTS = Path(__file__).parent / "contracts"
+
+
+def snapshot(name: str) -> Snapshot:
+    """The snapshot of an endpoint of this repository.
+
+    Args:
+        name: Snapshot folder, ``<provider>/<endpoint>``.
+
+    Returns:
+        The snapshot.
+    """
+    return Snapshot(CONTRACTS, name)
+
+
+def load(name: str, file: str) -> Any:
+    """Read one snapshot file.
+
+    Args:
+        name: Snapshot folder, ``<provider>/<endpoint>``.
+        file: File name in it.
+
+    Returns:
+        The decoded JSON.
+    """
+    return snapshot(name).load(file)
+
+
+def validator(case: Case, file: str) -> Draft202012Validator:
+    """Build a validator of a snapshot schema; the request one is closed.
+
+    Args:
+        case: The endpoint.
+        file: Schema file name.
+
+    Returns:
+        The validator.
+    """
+    return snapshot(case.name).validator(file)
+
+
+def examples(case: Case, file: str) -> list[Any]:
+    """Return the documentation examples of a snapshot.
+
+    Args:
+        case: The endpoint.
+        file: ``responses.json`` or ``events.json``.
+
+    Returns:
+        The example bodies.
+    """
+    return snapshot(case.name).examples(file)
 
 
 def modules(
@@ -252,7 +306,7 @@ class ProviderTypes:
 
     Attributes:
         name: Provider id.
-        snapshots: Snapshot folders, ``<provider>/<endpoint>``, of every
+        snapshots: The snapshots of every
             endpoint the provider's types serve.
         models: The modules of the response and event models.
         params: The modules of the request parameter models.
@@ -264,7 +318,7 @@ class ProviderTypes:
     """
 
     name: str
-    snapshots: tuple[str, ...]
+    snapshots: tuple[Snapshot, ...]
     models: tuple[ModuleType, ...]
     params: tuple[ModuleType, ...]
     covered: tuple[type[BaseModel], ...]
@@ -275,14 +329,17 @@ PROVIDER_TYPES = [
     for types in (
         ProviderTypes(
             name="openai",
-            snapshots=("openai/responses", "openai/files"),
+            snapshots=(snapshot("openai/responses"), snapshot("openai/files")),
             models=OPENAI.models,
             params=OPENAI.params,
             covered=(OPENAI.create, OPENAI.stream),
         ),
         ProviderTypes(
             name="anthropic",
-            snapshots=("anthropic/messages", "anthropic/files"),
+            snapshots=(
+                snapshot("anthropic/messages"),
+                snapshot("anthropic/files"),
+            ),
             models=ANTHROPIC.models,
             params=ANTHROPIC.params,
             covered=(ANTHROPIC.create, ANTHROPIC.stream),
@@ -290,90 +347,6 @@ PROVIDER_TYPES = [
     )
 ]
 """Each provider's types, checked against all of its snapshots."""
-
-
-@cache
-def load(name: str, file: str) -> Any:
-    """Read one snapshot file.
-
-    Args:
-        name: Snapshot folder, ``<provider>/<endpoint>``.
-        file: File name in it.
-
-    Returns:
-        The decoded JSON.
-    """
-    path = CONTRACTS / name / file
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def closed(schema: Any) -> Any:
-    """Close every object of a schema that lists its properties.
-
-    The upstream request schemas leave ``additionalProperties`` out,
-    which JSON Schema reads as "anything goes", while the APIs reject
-    unknown fields.
-
-    Args:
-        schema: A schema or a node of one.
-
-    Returns:
-        A copy with ``additionalProperties: false`` wherever an object
-        has ``properties`` and does not say otherwise.
-    """
-    if isinstance(schema, list):
-        return [closed(value) for value in schema]
-    if not isinstance(schema, dict):
-        return schema
-    result = {key: closed(value) for key, value in schema.items()}
-    if "properties" in result and "additionalProperties" not in result:
-        result["additionalProperties"] = False
-    return result
-
-
-def validator(case: Case, file: str) -> Draft202012Validator:
-    """Build a validator of a snapshot schema.
-
-    Args:
-        case: The endpoint.
-        file: Schema file name.
-
-    Returns:
-        The validator; the request schema is closed.
-    """
-    schema = load(case.name, file)
-    if file == "request.schema.json":
-        schema = closed(schema)
-    return Draft202012Validator(schema)
-
-
-def errors(validator: Draft202012Validator, value: Any) -> list[str]:
-    """List the schema errors of a value with their paths.
-
-    Args:
-        validator: The schema's validator.
-        value: The value.
-
-    Returns:
-        One ``path: message`` line per error.
-    """
-    return [
-        f"{error.json_path}: {error.message[:200]}"
-        for error in validator.iter_errors(value)
-    ]
-
-
-def examples(case: Case, file: str) -> list[Any]:
-    """Return the documentation examples of a snapshot.
-
-    Args:
-        case: The endpoint.
-        file: ``responses.json`` or ``events.json``.
-
-    Returns:
-        The example bodies.
-    """
-    return [item["body"] for item in load(case.name, file)]
 
 
 def frame(data: dict[str, Any]) -> bytes:
@@ -818,185 +791,6 @@ def test_hand_written_examples_pass_the_schemas(case: Case) -> None:
         assert errors(event_schema, body) == [], body["type"]
 
 
-RESPONSE_FILES: Final = ("response.schema.json", "stream.schema.json")
-"""The upstream schemas of the response and event models."""
-
-REQUEST_FILES: Final = ("request.schema.json",)
-"""The upstream schema of the request parameter models."""
-
-
-def snapshot_schemas(
-    names: tuple[str, ...], files: tuple[str, ...]
-) -> Iterator[dict[str, Any]]:
-    """Read the schemas of several snapshots that exist.
-
-    Args:
-        names: Snapshot folders, ``<provider>/<endpoint>``.
-        files: Schema file names; an endpoint without a stream has no
-            ``stream.schema.json``.
-
-    Yields:
-        Each schema.
-    """
-    for name in names:
-        for file in files:
-            if (CONTRACTS / name / file).is_file():
-                yield load(name, file)
-
-
-def upstream_definitions(
-    names: tuple[str, ...], files: tuple[str, ...] = RESPONSE_FILES
-) -> dict[str, Any]:
-    """Collect the definitions of endpoints' upstream schemas.
-
-    Args:
-        names: Snapshot folders, ``<provider>/<endpoint>``.
-        files: The schemas to read: the response and stream ones, or
-            the request one.
-
-    Returns:
-        Every ``$defs`` entry of the schemas, and each root schema under
-        its ``title`` (such as ``Response``), and every object written
-        inline in a property under ``<Owner>.<property>``.
-    """
-    definitions: dict[str, Any] = {}
-
-    for schema in snapshot_schemas(names, files):
-        definitions.update(schema.get("$defs", {}))
-
-        if title := schema.get("title"):
-            definitions.setdefault(title, schema)
-
-    # A nullable object (anyOf of it and null, as the official OpenAPI
-    # files write ResponseError) is checked as the object.
-    for key, definition in list(definitions.items()):
-        options = definition.get("anyOf", ())
-        objects = [o for o in options if o.get("type") != "null"]
-        if (
-            len(options) == 2
-            and len(objects) == 1
-            and ("properties" in objects[0])
-        ):
-            definitions[key] = objects[0]
-
-    # An object written inline in a property has no name upstream (the
-    # official OpenAPI files do this); it is named <Owner>.<property>.
-    for owner, definition in list(definitions.items()):
-        for prop, node in definition.get("properties", {}).items():
-            for option in [node, *node.get("anyOf", ())]:
-                if isinstance(option, dict) and "properties" in option:
-                    definitions.setdefault(f"{owner}.{prop}", option)
-
-    return definitions
-
-
-def resolve(node: Any, definitions: dict[str, Any]) -> Any:
-    """Follow a ``$ref`` to its definition.
-
-    Args:
-        node: A schema node.
-        definitions: The endpoint's definitions by name.
-
-    Returns:
-        The referenced definition, or the node itself.
-    """
-    while isinstance(node, dict) and "$ref" in node:
-        node = definitions[str(node["$ref"]).rsplit("/", 1)[-1]]
-    return node
-
-
-def allows_null(node: Any, definitions: dict[str, Any]) -> bool:
-    """Tell whether a schema node accepts ``null``.
-
-    Args:
-        node: A schema node.
-        definitions: The endpoint's definitions by name.
-
-    Returns:
-        Whether ``null`` is valid for the node.
-    """
-    node = resolve(node, definitions)
-
-    if not isinstance(node, dict):
-        return False
-
-    constrained = ("type", "anyOf", "oneOf", "allOf", "enum", "const")
-    if not any(key in node for key in constrained):
-        return True  # {} takes any value, null too
-
-    kind = node.get("type")
-
-    if kind == "null" or (isinstance(kind, list) and "null" in kind):
-        return True
-
-    return any(
-        allows_null(option, definitions)
-        for key in ("anyOf", "oneOf")
-        for option in node.get(key, [])
-    )
-
-
-def provider_models(
-    types: ProviderTypes, *, params: bool = False
-) -> Iterator[type[BaseAPIType]]:
-    """Find the models of a provider.
-
-    Args:
-        types: The provider's types.
-        params: Find the request parameter models instead of the
-            response and event ones.
-
-    Yields:
-        Every ``BaseAPIType`` subclass defined in the endpoint's model
-        modules, except the ``BaseUnknown`` ones, which keep whatever an
-        unknown ``type`` sends, and the parameter mixins of the methods
-        ``test_method_fields_match_the_request_schema`` checks.
-    """
-    mixins = {base for method in types.covered for base in method.__mro__}
-    for module in types.params if params else types.models:
-        for _, model in inspect.getmembers(module, inspect.isclass):
-            if (
-                issubclass(model, BaseAPIType)
-                and model.__module__ == module.__name__
-                and not issubclass(model, BaseUnknown)
-                and model not in mixins
-            ):
-                yield model
-
-
-def upstream_names(model: type[BaseAPIType]) -> tuple[str, ...]:
-    """Read the upstream definitions a model declares it mirrors.
-
-    Args:
-        model: A provider model.
-
-    Returns:
-        The names; empty for a model without an upstream definition.
-    """
-    names = model.__dict__["__upstream_schema__"]
-    return (names,) if isinstance(names, str) else tuple(names)
-
-
-def is_constant(annotation: Any, default: Any) -> bool:
-    """Tell a single-value tag that defaults to its one value.
-
-    Such a field (``type: Literal["function"] = "function"``) is always
-    sent, so a schema that requires it is met without the caller.
-
-    Args:
-        annotation: The field's type.
-        default: Its default.
-
-    Returns:
-        Whether the type is a one-value ``Literal`` of the default.
-    """
-    while get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
-    return get_origin(annotation) is Literal and get_args(annotation) == (
-        default,
-    )
-
-
 SIDES = [pytest.param(False, id="responses"), pytest.param(True, id="params")]
 """The response and event models, and the request parameter models."""
 
@@ -1006,26 +800,14 @@ SIDES = [pytest.param(False, id="responses"), pytest.param(True, id="params")]
 def test_every_model_names_its_upstream_schema(
     types: ProviderTypes, params: bool
 ) -> None:
-    definitions = upstream_definitions(
-        types.snapshots, REQUEST_FILES if params else RESPONSE_FILES
+    models = list(
+        provider_models(
+            types.params if params else types.models, types.covered
+        )
     )
-    models = list(provider_models(types, params=params))
-    missing = [
-        model.__name__
-        for model in models
-        if "__upstream_schema__" not in model.__dict__
-    ]
-    unknown = [
-        f"{model.__name__}: {name}"
-        for model in models
-        if "__upstream_schema__" in model.__dict__
-        for name in upstream_names(model)
-        if name not in definitions
-    ]
 
     assert models
-    assert not missing, f"set __upstream_schema__ on {missing}"
-    assert not unknown, f"no such upstream definition: {unknown}"
+    assert naming_problems(types.snapshots, models, params=params) == []
 
 
 @pytest.mark.parametrize("params", SIDES)
@@ -1033,55 +815,9 @@ def test_every_model_names_its_upstream_schema(
 def test_models_accept_what_upstream_allows(
     types: ProviderTypes, params: bool
 ) -> None:
-    # Validation of examples sees only the values the docs happen to
-    # show; this compares every modeled field with the schema itself.
-    # A response field may only be laxer than the schema, to read what
-    # is sent; a request field follows it both ways: None only where null
-    # is allowed, required only where it is.
-    files = REQUEST_FILES if params else RESPONSE_FILES
-    definitions = upstream_definitions(types.snapshots, files)
-    # upstream_definitions reads a nullable object as the object; its
-    # null is read from the definitions as they are.
-    nullable = {
-        name: definition
-        for schema in snapshot_schemas(types.snapshots, files)
-        for name, definition in schema.get("$defs", {}).items()
-    }
-    problems: list[str] = []
-
-    for model in provider_models(types, params=params):
-        for name in upstream_names(model):
-            definition = resolve(definitions[name], definitions)
-            properties = definition.get("properties", {})
-            required = set(definition.get("required", []))
-
-            for field_name, field in model.model_fields.items():
-                wire = field.serialization_alias or field_name
-                where = f"{model.__name__}.{field_name} ({name}.{wire})"
-
-                if wire not in properties:
-                    problems.append(f"{where}: not in the upstream schema")
-                    continue
-
-                takes_none = field.annotation is Any or type(None) in get_args(
-                    field.annotation
-                )
-                null = allows_null(
-                    properties[wire], nullable if params else definitions
-                )
-                if null and not takes_none:
-                    problems.append(f"{where}: upstream allows null")
-                if params and takes_none and not null:
-                    problems.append(f"{where}: upstream takes no null")
-
-                if wire not in required and field.is_required():
-                    problems.append(f"{where}: optional upstream")
-                if (
-                    params
-                    and wire in required
-                    and not field.is_required()
-                    and not is_constant(field.annotation, field.default)
-                ):
-                    problems.append(f"{where}: required upstream")
+    models = provider_models(
+        types.params if params else types.models, types.covered
+    )
+    problems = field_problems(types.snapshots, models, params=params)
 
     assert not problems, "\n".join(problems)
