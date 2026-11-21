@@ -6,7 +6,12 @@ from typing import Annotated, Final, Literal
 
 from pydantic import ConfigDict, Field
 
-from aiollm.enums import GenerationEventType, IncompleteReason, Provider
+from aiollm.enums import (
+    GenerationEventType,
+    IncompleteReason,
+    Provider,
+    ServerToolPhase,
+)
 from aiollm.types.base import BaseAPIType
 from aiollm.types.matchers import EventTypes
 from aiollm.types.requests.generation import (
@@ -15,6 +20,7 @@ from aiollm.types.requests.generation import (
     ToolCallTurn,
     Turn,
 )
+from aiollm.types.responses.builtin import Citation, ServerToolCall
 from aiollm.types.responses.generation import TokenUsage, continuation
 
 
@@ -129,6 +135,30 @@ class ToolCallDoneEvent[RawT](RawResponseEvent[RawT]):
     call: ToolCall
 
 
+class ServerToolCallEvent[RawT](RawResponseEvent[RawT]):
+    """A built-in tool call starts, or ends.
+
+    The provider runs these tools, so there is nothing to run: the
+    events tell what it is doing. A call has one event for each phase,
+    ``STARTED`` and then ``DONE``; the call of the first has what is
+    known at the start, the call of the second the whole call. The
+    deltas of a call's code and the partial images stay
+    ``OtherEvent``s.
+
+    Attributes:
+        type: Always ``GenerationEventType.SERVER_TOOL_CALL``.
+        phase: Which moment of the call it tells.
+        call: The call as it is at that moment; its ``status`` is
+            ``IN_PROGRESS`` until ``DONE``.
+    """
+
+    type: Literal[GenerationEventType.SERVER_TOOL_CALL] = (
+        GenerationEventType.SERVER_TOOL_CALL
+    )
+    phase: ServerToolPhase
+    call: ServerToolCall
+
+
 class CompletedEvent[RawT](RawResponseEvent[RawT]):
     """The generation finished, or stopped early.
 
@@ -161,6 +191,10 @@ class CompletedEvent[RawT](RawResponseEvent[RawT]):
             set through ``provider_options``); ``None`` otherwise.
         tool_calls: The calls of the request's tools, as on
             ``GenerationResponse``.
+        server_tool_calls: The calls of built-in tools, as on
+            ``GenerationResponse``.
+        citations: The sources the text rests on, as on
+            ``GenerationResponse``.
         native: The stream's output as its provider's next request takes
             it, as ``GenerationResponse.native``.
     """
@@ -178,6 +212,10 @@ class CompletedEvent[RawT](RawResponseEvent[RawT]):
     refusal: str | None = None
     reasoning: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list[ToolCall])
+    server_tool_calls: list[ServerToolCall] = Field(
+        default_factory=list[ServerToolCall]
+    )
+    citations: list[Citation] = Field(default_factory=list[Citation])
     native: NativeOutput | None = None
 
     def to_turn(self) -> Turn | ToolCallTurn:
@@ -187,7 +225,8 @@ class CompletedEvent[RawT](RawResponseEvent[RawT]):
 
         Returns:
             A ``ToolCallTurn`` when the model called tools, else an
-            ``assistant`` turn with ``text``.
+            ``assistant`` turn with ``text``, and with ``native`` when
+            it called built-in tools or paused.
 
         Raises:
             ValueError: There are neither calls nor text, or there are
@@ -197,6 +236,7 @@ class CompletedEvent[RawT](RawResponseEvent[RawT]):
             "the stream" if self.id is None else f"stream {self.id}",
             text=self.text,
             tool_calls=self.tool_calls,
+            server_tool_calls=self.server_tool_calls,
             incomplete_reason=self.incomplete_reason,
             native=self.native,
         )
@@ -218,6 +258,7 @@ type GenerationEvent[RawT] = Annotated[
     | ToolCallStartEvent[RawT]
     | ToolCallDeltaEvent[RawT]
     | ToolCallDoneEvent[RawT]
+    | ServerToolCallEvent[RawT]
     | CompletedEvent[RawT]
     | OtherEvent[RawT],
     Field(discriminator="type"),

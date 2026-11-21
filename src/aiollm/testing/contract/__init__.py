@@ -24,12 +24,14 @@ from aiollm.testing.contract.clients import (
 )
 from aiollm.testing.contract.files import FilesCase, FilesContract
 from aiollm.testing.contract.generation import (
+    BuiltinCase,
     GenerationCase,
     GenerationContract,
 )
 
 __all__ = [
     "AnotherErrorResolver",
+    "BuiltinCase",
     "ClientCase",
     "ClientContract",
     "FilesCase",

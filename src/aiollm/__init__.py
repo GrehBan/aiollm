@@ -29,12 +29,16 @@ from aiollm.client.binding import (
 )
 from aiollm.enums import (
     BodyFormat,
+    CitationKind,
     Effort,
     GenerationEventType,
     IncompleteReason,
     Provider,
     ResponseFormat,
     Role,
+    ServerToolKind,
+    ServerToolPhase,
+    ServerToolStatus,
     ToolChoice,
 )
 from aiollm.exceptions import (
@@ -133,6 +137,13 @@ from aiollm.types.files import (
     PathFile,
     StreamFile,
 )
+from aiollm.types.requests.builtin import (
+    BuiltinTool,
+    CodeExecution,
+    ProviderTool,
+    UserLocation,
+    WebSearch,
+)
 from aiollm.types.requests.content import (
     ContentPart,
     DocumentPart,
@@ -153,11 +164,16 @@ from aiollm.types.requests.generation import (
     Turn,
     tool,
 )
+from aiollm.types.responses.builtin import (
+    Citation,
+    ServerToolCall,
+)
 from aiollm.types.responses.events import (
     CompletedEvent,
     GenerationEvent,
     OtherEvent,
     ReasoningDeltaEvent,
+    ServerToolCallEvent,
     TextDeltaEvent,
     ToolCallDeltaEvent,
     ToolCallDoneEvent,
@@ -204,11 +220,15 @@ __all__ = [
     "BearerAuth",
     "BillingError",
     "BodyFormat",
+    "BuiltinTool",
     "BytesFile",
     "CallbackCancelledError",
     "CallbackExceptionGroup",
     "CallbackFailure",
     "ChunkedFile",
+    "Citation",
+    "CitationKind",
+    "CodeExecution",
     "CompletedEvent",
     "ConflictError",
     "ContentPart",
@@ -244,6 +264,7 @@ __all__ = [
     "PermissionDeniedError",
     "Provider",
     "ProviderFile",
+    "ProviderTool",
     "QuotaExceededError",
     "RateLimitError",
     "ReasoningDeltaEvent",
@@ -254,6 +275,11 @@ __all__ = [
     "RetryState",
     "Role",
     "ServerSentEvent",
+    "ServerToolCall",
+    "ServerToolCallEvent",
+    "ServerToolKind",
+    "ServerToolPhase",
+    "ServerToolStatus",
     "ServiceUnavailableError",
     "SessionMismatchWarning",
     "StoredFile",
@@ -272,6 +298,8 @@ __all__ = [
     "ToolResult",
     "Turn",
     "UnprocessableEntityError",
+    "UserLocation",
+    "WebSearch",
     "__version__",
     "bind_resource",
     "tool",

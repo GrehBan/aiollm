@@ -13,6 +13,7 @@ from aiollm.testing.contract.clients import ClientCase, ClientContract
 from aiollm.testing.contract.files import FilesCase, FilesContract
 from aiollm.testing.contract.generation import (
     SCHEMA,
+    BuiltinCase,
     GenerationCase,
     GenerationContract,
 )
@@ -128,6 +129,32 @@ ECHO_GENERATION = GenerationCase(
             {"type": "document", "url": "https://example.com/report.pdf"},
         ],
     },
+    builtin=BuiltinCase(
+        tools={
+            "tools": [
+                {
+                    "type": "web_search",
+                    "allowed_domains": ["example.com"],
+                    "user_location": {"country": "FR", "city": "Paris"},
+                },
+                {"type": "code_execution"},
+            ]
+        },
+        mixed={
+            "tools": [
+                {
+                    "name": "get_time",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {"type": "web_search"},
+            ]
+        },
+        searched=echo.SEARCHED,
+        searched_stream=echo.SEARCHED_STREAM,
+        failed=echo.FAILED,
+        paused=echo.PAUSED,
+        continued=[{"role": "assistant", "output": echo.PAUSED_ITEMS}],
+    ),
     after_results=[
         {"role": "tool", "call_id": "call_1", "output": "noon"},
         {

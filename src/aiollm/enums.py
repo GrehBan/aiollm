@@ -168,12 +168,16 @@ class IncompleteReason(StrEnum):
     Attributes:
         MAX_TOKENS: The output reached the token limit of the request.
         REFUSAL: The model refused to answer.
+        PAUSED: The provider paused a long turn of its built-in tools
+            (Anthropic's ``pause_turn``); send ``to_turn()`` back to
+            continue it.
         OTHER: Any other reason, such as a content filter or a full
             context window.
     """
 
     MAX_TOKENS = "max_tokens"
     REFUSAL = "refusal"
+    PAUSED = "paused"
     OTHER = "other"
 
 
@@ -220,6 +224,79 @@ class ToolChoice(StrEnum):
 
 
 @unique
+class ServerToolKind(StrEnum):
+    """What a built-in tool call does, for every provider.
+
+    A built-in (server) tool runs at the provider, not in your code.
+
+    Attributes:
+        WEB_SEARCH: A search of the web.
+        FILE_SEARCH: A search of the provider's stored files.
+        CODE_EXECUTION: Code run in the provider's sandbox.
+        WEB_FETCH: A fetch of one web page.
+        IMAGE_GENERATION: An image made by the model.
+        MCP: A call of a tool of a remote MCP server.
+        OTHER: Any other built-in tool; ``ServerToolCall.raw`` has it.
+    """
+
+    WEB_SEARCH = "web_search"
+    FILE_SEARCH = "file_search"
+    CODE_EXECUTION = "code_execution"
+    WEB_FETCH = "web_fetch"
+    IMAGE_GENERATION = "image_generation"
+    MCP = "mcp"
+    OTHER = "other"
+
+
+@unique
+class ServerToolStatus(StrEnum):
+    """How far a built-in tool call got.
+
+    A tool that failed is a call with ``FAILED``, not an exception: the
+    response that holds it is valid.
+
+    Attributes:
+        IN_PROGRESS: The call has started and has no result yet.
+        COMPLETED: The call finished and has its result.
+        INCOMPLETE: The call stopped early, such as at a limit.
+        FAILED: The call finished with an error of the tool.
+    """
+
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    INCOMPLETE = "incomplete"
+    FAILED = "failed"
+
+
+@unique
+class ServerToolPhase(StrEnum):
+    """Which moment of a built-in tool call a stream event tells.
+
+    Attributes:
+        STARTED: The call has begun.
+        DONE: The call has its result, or has failed.
+    """
+
+    STARTED = "started"
+    DONE = "done"
+
+
+@unique
+class CitationKind(StrEnum):
+    """What a citation points to.
+
+    Attributes:
+        URL: A page of the web.
+        FILE: A file the provider stores.
+        CONTAINER_FILE: A file a code execution made in its container.
+    """
+
+    URL = "url"
+    FILE = "file"
+    CONTAINER_FILE = "container_file"
+
+
+@unique
 class GenerationEventType(StrEnum):
     """``type`` of a shared generation event.
 
@@ -231,6 +308,8 @@ class GenerationEventType(StrEnum):
         TOOL_CALL_DELTA: A piece of a call's arguments,
             ``ToolCallDeltaEvent``.
         TOOL_CALL_DONE: A tool call is complete, ``ToolCallDoneEvent``.
+        SERVER_TOOL_CALL: A built-in tool call starts or ends,
+            ``ServerToolCallEvent``.
         COMPLETED: The end of the generation, ``CompletedEvent``.
         OTHER: A provider event without a shared counterpart,
             ``OtherEvent``.
@@ -241,5 +320,6 @@ class GenerationEventType(StrEnum):
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_DELTA = "tool_call_delta"
     TOOL_CALL_DONE = "tool_call_done"
+    SERVER_TOOL_CALL = "server_tool_call"
     COMPLETED = "completed"
     OTHER = "other"

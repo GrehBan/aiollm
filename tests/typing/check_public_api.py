@@ -23,6 +23,8 @@ from aiollm import (
     BaseAPIType,
     BaseClient,
     BaseStreamMethod,
+    BuiltinTool,
+    CodeExecution,
     CompletedEvent,
     Effort,
     GenerationStream,
@@ -34,7 +36,10 @@ from aiollm import (
     RetryState,
     Role,
     ServerSentEvent,
+    ServerToolCall,
     Stream,
+    UserLocation,
+    WebSearch,
     bind_resource,
     tool,
 )
@@ -85,6 +90,7 @@ from aiollm.types.requests import (
     TextPart,
     Tool,
     ToolCall,
+    ToolCallTurn,
     Turn,
 )
 from aiollm.types.responses import (
@@ -719,3 +725,15 @@ async def turns_take_parts() -> None:
     assert_type(await DocumentPart.load("r.pdf"), DocumentPart)
     Turn.user([TextPart(text="What is it?"), image])
     Turn.user([1])  # type: ignore[list-item]
+
+
+def builtin_tools_share_the_tool_list(
+    response: GenerationResponse[None],
+) -> None:
+    tools: list[BuiltinTool] = [WebSearch(), CodeExecution()]
+    assert tools
+    WebSearch(user_location=UserLocation(city="Paris"))
+    WebSearch(blocked_domains=["a.com"])  # type: ignore[call-arg]
+    CodeExecution(memory="1g")  # type: ignore[call-arg]
+    assert_type(response.server_tool_calls, list[ServerToolCall])
+    assert_type(response.to_turn(), Turn | ToolCallTurn)

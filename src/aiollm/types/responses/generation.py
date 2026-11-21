@@ -13,6 +13,7 @@ from aiollm.types.requests.generation import (
     Turn,
 )
 from aiollm.types.responses.base import BaseResponse
+from aiollm.types.responses.builtin import Citation, ServerToolCall
 
 
 class TokenUsage(BaseAPIType):
@@ -72,8 +73,13 @@ class GenerationResponse[RawT](BaseResponse):
             model made them; empty without calls. A response with calls
             waits for their results; when ``incomplete_reason`` is set,
             the last call may be cut off, so run none of them.
+        server_tool_calls: The calls of built-in tools the provider ran,
+            in the order it made them; empty without any. They need no
+            result from you, and ``tool_calls`` has none of them.
+        citations: The sources the text rests on, from a search or a
+            file search; empty without any.
         native: The response's output as its provider's next request
-            takes it; ``to_turn()`` puts it in a turn of calls.
+            takes it; ``to_turn()`` puts it in the next turn.
         raw: The provider's response.
     """
 
@@ -88,6 +94,10 @@ class GenerationResponse[RawT](BaseResponse):
     refusal: str | None = None
     reasoning: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list[ToolCall])
+    server_tool_calls: list[ServerToolCall] = Field(
+        default_factory=list[ServerToolCall]
+    )
+    citations: list[Citation] = Field(default_factory=list[Citation])
     native: NativeOutput | None = None
 
     raw: RawT
@@ -98,7 +108,12 @@ class GenerationResponse[RawT](BaseResponse):
         Returns:
             A ``ToolCallTurn`` with the calls, the text and ``native``
             when the model called tools, which the tools' results follow;
-            else an ``assistant`` turn with ``text``.
+            else an ``assistant`` turn with ``text``. The turn also has
+            ``native`` when the response called built-in tools, whose
+            calls and results the provider needs back, or paused. A
+            paused generation (``IncompleteReason.PAUSED``) makes an
+            ``assistant`` turn even without text: send it back to let
+            the provider go on.
 
         Raises:
             ValueError: The response has neither calls nor text, such as
@@ -115,6 +130,7 @@ class GenerationResponse[RawT](BaseResponse):
             "the response" if self.id is None else f"response {self.id}",
             text=self.text,
             tool_calls=self.tool_calls,
+            server_tool_calls=self.server_tool_calls,
             incomplete_reason=self.incomplete_reason,
             native=self.native,
         )
@@ -125,6 +141,7 @@ def continuation(
     *,
     text: str | None,
     tool_calls: list[ToolCall],
+    server_tool_calls: list[ServerToolCall],
     incomplete_reason: IncompleteReason | None,
     native: NativeOutput | None,
 ) -> Turn | ToolCallTurn:
@@ -137,16 +154,18 @@ def continuation(
         name: How the errors name the generation.
         text: Its text, if any.
         tool_calls: Its calls.
+        server_tool_calls: Its built-in tool calls.
         incomplete_reason: Why it stopped early, if it did.
         native: Its output as its provider's next request takes it.
 
     Returns:
         A ``ToolCallTurn`` when there are calls, else an ``assistant``
-        turn.
+        turn with the text, and with ``native`` when there are built-in
+        tool calls or the generation paused.
 
     Raises:
-        ValueError: There are neither calls nor text, or there are calls
-            but the generation stopped early.
+        ValueError: There are neither calls nor text, unless the
+            generation paused, or there are calls but it stopped early.
     """
     if tool_calls:
         if incomplete_reason is not None:
@@ -161,7 +180,13 @@ def continuation(
             tool_calls=tool_calls,
             native=MISSING if native is None else native,
         )
-    if text is None:
+    if text is None and incomplete_reason is not IncompleteReason.PAUSED:
         message = f"{name} has no text to continue the conversation with"
         raise ValueError(message)
-    return Turn.assistant(text)
+    keeps_native = bool(server_tool_calls) or (
+        incomplete_reason is IncompleteReason.PAUSED
+    )
+    return Turn.assistant(
+        "" if text is None else text,
+        native=native if native is not None and keeps_native else MISSING,
+    )

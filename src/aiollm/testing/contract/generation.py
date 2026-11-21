@@ -29,7 +29,16 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final
 import pytest
 from pydantic import MISSING
 
-from aiollm.enums import Effort, IncompleteReason, Provider, ToolChoice
+from aiollm.enums import (
+    CitationKind,
+    Effort,
+    IncompleteReason,
+    Provider,
+    ServerToolKind,
+    ServerToolPhase,
+    ServerToolStatus,
+    ToolChoice,
+)
 from aiollm.exceptions import RequestValidationError
 from aiollm.http.exceptions.status import (
     BadRequestError,
@@ -46,6 +55,7 @@ from aiollm.session.retry import RetryPolicy
 from aiollm.testing.doubles import TEST_TOKEN
 from aiollm.testing.recording import Reply
 from aiollm.types.requests import (
+    CodeExecution,
     ContentPart,
     DocumentPart,
     ForcedTool,
@@ -53,15 +63,19 @@ from aiollm.types.requests import (
     ImagePart,
     JSONSchema,
     NativeOutput,
+    ProviderTool,
     TextPart,
     Tool,
     ToolCall,
     ToolCallTurn,
     ToolResult,
     Turn,
+    UserLocation,
+    WebSearch,
 )
 from aiollm.types.responses import (
     CompletedEvent,
+    ServerToolCallEvent,
     TextDeltaEvent,
     TokenUsage,
     ToolCallDeltaEvent,
@@ -126,6 +140,61 @@ PARTS: Final[list[ContentPart]] = [
 """A user turn of every kind of part and source."""
 
 
+BUILTIN_TOOLS: Final = [
+    WebSearch(
+        allowed_domains=["example.com"],
+        user_location=UserLocation(country="FR", city="Paris"),
+    ),
+    CodeExecution(),
+]
+"""The built-in tools of the scenarios: a search with both its options,
+and a code execution."""
+
+SEARCH_ID: Final = "search_1"
+"""The id of the web search call the model makes in the scenarios."""
+
+SEARCH_QUERIES: Final = ["weather in Paris"]
+"""What that search looks for."""
+
+CITATIONS: Final = [
+    (CitationKind.URL, "https://example.com/paris", "Paris weather")
+]
+"""The citations of the text the search leads to: kind, url, title."""
+
+
+@dataclass(frozen=True)
+class BuiltinCase:
+    """The built-in tool scenarios of one provider.
+
+    Every ``dict`` is in the provider's wire format. A provider that
+    runs built-in tools gives its ``GenerationCase`` one of these; a
+    case without it skips the scenarios.
+
+    Attributes:
+        tools: What ``BUILTIN_TOOLS`` become in the body: the keys a
+            request with them (and ``ToolChoice.AUTO``) sets.
+        mixed: What a function tool, ``TOOLS[1]``, followed by
+            ``WebSearch()`` become: the function tool goes first.
+        searched: A finished response of one web search, call
+            ``SEARCH_ID`` for ``SEARCH_QUERIES``, with the text of
+            ``GenerationCase.text`` and the ``CITATIONS``.
+        searched_stream: A finished stream of the same.
+        failed: A finished response whose web search failed.
+        paused: A response that paused its turn in the middle of a
+            search, without text; its ``native`` output goes back.
+        continued: The body's conversation after its first turn, when
+            ``paused`` comes back with the user turn before it.
+    """
+
+    tools: dict[str, Any]
+    mixed: dict[str, Any]
+    searched: dict[str, Any]
+    searched_stream: list[dict[str, Any]]
+    failed: dict[str, Any]
+    paused: dict[str, Any]
+    continued: list[Any]
+
+
 @dataclass(frozen=True)
 class GenerationCase:
     """One provider in the generation scenarios.
@@ -173,6 +242,8 @@ class GenerationCase:
         after_results: The body's conversation after its first two
             items, when a call to ``get_time`` (id ``call_1``) has its
             result ``noon`` and a user turn of ``PARTS[:2]`` follows.
+        builtin: The built-in tool scenarios; ``None`` for a provider
+            without built-in tools, which skips them.
     """
 
     provider: Provider
@@ -209,6 +280,7 @@ class GenerationCase:
     continued_streamed: list[Any]
     parts: dict[str, Any]
     after_results: list[Any]
+    builtin: BuiltinCase | None = None
 
     @property
     def delta(self) -> dict[str, Any]:
@@ -219,6 +291,22 @@ class GenerationCase:
     def until_delta(self) -> list[dict[str, Any]]:
         """The stream up to its first text delta, included."""
         return self.stream[: self.stream.index(self.delta) + 1]
+
+
+def with_tools(tools: list[Any], input: Any = None) -> GenerationRequest:
+    """Build the request of most scenarios with tools.
+
+    Args:
+        tools: The tools: functions, built-in tools, or both.
+        input: The conversation, if it is not ``REQUEST``'s text.
+
+    Returns:
+        ``REQUEST`` with the tools, validated.
+    """
+    fields: dict[str, Any] = {**REQUEST.model_dump(by_alias=True)}
+    if input is not None:
+        fields["input"] = input
+    return GenerationRequest.model_validate({**fields, "tools": tools})
 
 
 def frame(data: dict[str, Any]) -> bytes:
@@ -1402,3 +1490,192 @@ class GenerationContract:
                 response = await client.generation.create(REQUEST)
 
         assert response.text == case.text
+
+    @pytest.fixture
+    def builtin(self) -> BuiltinCase:
+        """Take the case's built-in tool scenarios, or skip.
+
+        Returns:
+            The case's ``builtin``.
+        """
+        if self.case.builtin is None:  # pragma: no cover
+            pytest.skip("the provider has no built-in tools")
+        return self.case.builtin
+
+    @pytest.mark.parametrize("mode", ["create", "stream"])
+    async def test_builtin_tools_reach_the_wire(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+        mode: str,
+    ) -> None:
+        """Built-in tools reach the wire."""
+        case = self.case
+        recorder.reply(
+            Reply(json=case.response)
+            if mode == "create"
+            else events(case.stream)
+        )
+        request = with_tools(BUILTIN_TOOLS)
+
+        async with client:
+            if mode == "create":
+                await client.generation.create(request)
+            else:
+                async with client.generation.stream(request) as stream:
+                    await stream.final()
+
+        body = json.loads(recorder.last.body)
+        assert {key: body[key] for key in builtin.tools} == builtin.tools
+
+    async def test_builtin_tools_follow_function_tools(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+    ) -> None:
+        """Built-in tools follow function tools."""
+        recorder.reply(Reply(json=self.case.response))
+        request = with_tools([WebSearch(), TOOLS[1]])
+
+        async with client:
+            await client.generation.create(request)
+
+        body = json.loads(recorder.last.body)
+        assert {key: body[key] for key in builtin.mixed} == builtin.mixed
+
+    async def test_a_tool_of_another_provider_is_refused(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+    ) -> None:
+        """A tool of another provider is refused."""
+        other = ProviderTool(
+            provider=Provider("someone-else"), definition={"type": "x"}
+        )
+        request = with_tools([other])
+
+        async with client:
+            with pytest.raises(RequestValidationError) as caught:
+                await client.generation.create(request)
+
+        assert builtin
+        assert caught.value.field == "tools"
+        assert caught.value.provider == self.case.provider
+        assert not recorder.requests
+
+    @pytest.mark.parametrize("mode", ["create", "stream"])
+    async def test_builtin_tool_calls_come_back_alike(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+        mode: str,
+    ) -> None:
+        """Built-in tool calls and citations come back alike."""
+        recorder.reply(
+            Reply(json=builtin.searched)
+            if mode == "create"
+            else events(builtin.searched_stream)
+        )
+        request = with_tools(BUILTIN_TOOLS)
+
+        async with client:
+            if mode == "create":
+                result: Any = await client.generation.create(request)
+            else:
+                async with client.generation.stream(request) as stream:
+                    result = await stream.final()
+
+        assert [
+            (call.id, call.kind, call.status, call.queries)
+            for call in result.server_tool_calls
+        ] == [
+            (
+                SEARCH_ID,
+                ServerToolKind.WEB_SEARCH,
+                ServerToolStatus.COMPLETED,
+                SEARCH_QUERIES,
+            )
+        ]
+        assert all(call.raw for call in result.server_tool_calls)
+        assert [
+            (citation.kind, citation.url, citation.title)
+            for citation in result.citations
+        ] == CITATIONS
+        assert result.tool_calls == []
+        assert result.text
+        assert result.incomplete_reason is None
+
+    async def test_builtin_tool_calls_stream_as_started_then_done(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+    ) -> None:
+        """Built-in tool calls stream as started then done."""
+        recorder.reply(events(builtin.searched_stream))
+        request = with_tools(BUILTIN_TOOLS)
+
+        async with client, client.generation.stream(request) as stream:
+            received = [event async for event in stream]
+
+        tool_events = [
+            e for e in received if isinstance(e, ServerToolCallEvent)
+        ]
+        assert [(e.phase, e.call.id) for e in tool_events] == [
+            (ServerToolPhase.STARTED, SEARCH_ID),
+            (ServerToolPhase.DONE, SEARCH_ID),
+        ]
+        assert tool_events[0].call.status is ServerToolStatus.IN_PROGRESS
+        assert tool_events[1].call.status is ServerToolStatus.COMPLETED
+        completed = received[-1]
+        assert isinstance(completed, CompletedEvent)
+        assert completed.server_tool_calls[0].id == SEARCH_ID
+        assert completed.server_tool_calls[0].queries == SEARCH_QUERIES
+
+    async def test_a_failed_builtin_tool_is_a_call_not_an_error(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+    ) -> None:
+        """A failed built-in tool is a call, not an error."""
+        recorder.reply(Reply(json=builtin.failed))
+        request = with_tools(BUILTIN_TOOLS)
+
+        async with client:
+            response = await client.generation.create(request)
+
+        [call] = response.server_tool_calls
+        assert call.kind is ServerToolKind.WEB_SEARCH
+        assert call.status is ServerToolStatus.FAILED
+        assert call.error
+
+    async def test_a_paused_generation_continues_with_its_native_output(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+    ) -> None:
+        """A paused generation continues with its native output."""
+        case = self.case
+        recorder.reply(Reply(json=builtin.paused), Reply(json=case.response))
+        request = with_tools(BUILTIN_TOOLS)
+
+        async with client:
+            paused = await client.generation.create(request)
+            turn = paused.to_turn()
+            await client.generation.create(
+                with_tools(BUILTIN_TOOLS, [Turn.user("Hi"), turn])
+            )
+
+        assert paused.incomplete_reason is IncompleteReason.PAUSED
+        assert paused.text is None
+        assert isinstance(turn, Turn)
+        assert turn.native is not MISSING
+        assert turn.native.provider == case.provider
+        body = json.loads(recorder.last.body)
+        assert body[case.input_field][1:] == builtin.continued

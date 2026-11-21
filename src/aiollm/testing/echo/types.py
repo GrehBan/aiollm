@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from pydantic import Discriminator, Field, Tag
 
@@ -50,13 +50,75 @@ class ToolCallItem(BaseAPITypeExtra):
     arguments: str
 
 
-OUTPUT_TAGS = {"text": "text", "refusal": "refusal", "tool_call": "tool_call"}
+class ServerToolItem(BaseAPITypeExtra):
+    """A call of a built-in tool, which the echo API ran itself.
+
+    Attributes:
+        type: Always ``server_tool``.
+        id: The call's id.
+        kind: What it does: ``web_search``, ``code_execution`` or
+            another kind of ``ServerToolKind``.
+        status: ``in_progress``, ``completed``, ``incomplete`` or
+            ``failed``.
+        queries: What a search looked for.
+        code: The code a code execution ran.
+        error: What went wrong, for a failed call.
+        result: The call's result, in the echo API's own words.
+    """
+
+    type: Literal["server_tool"] = "server_tool"
+    id: str
+    kind: str
+    status: str = "completed"
+    queries: list[str] = Field(default_factory=list[str])
+    code: str | None = None
+    error: str | None = None
+    result: dict[str, Any] | None = None
+
+
+class CitationItem(BaseAPITypeExtra):
+    """A source the text rests on.
+
+    Attributes:
+        type: Always ``citation``.
+        kind: ``url``, ``file`` or ``container_file``.
+        url: The page, for ``url``.
+        title: The title of the page or file.
+        file_id: The file's id, for a file.
+        container_id: The container's id, for ``container_file``.
+        filename: The file's name.
+        cited_text: The cited words of the source.
+        start_index: Where the cited part of the text starts.
+        end_index: Where it ends.
+    """
+
+    type: Literal["citation"] = "citation"
+    kind: str
+    url: str | None = None
+    title: str | None = None
+    file_id: str | None = None
+    container_id: str | None = None
+    filename: str | None = None
+    cited_text: str | None = None
+    start_index: int | None = None
+    end_index: int | None = None
+
+
+OUTPUT_TAGS = {
+    "text": "text",
+    "refusal": "refusal",
+    "tool_call": "tool_call",
+    "server_tool": "server_tool",
+    "citation": "citation",
+}
 """Tag of each output ``type`` the echo types model."""
 
 type OutputItem = Annotated[
     Annotated[TextItem, Tag("text")]
     | Annotated[RefusalItem, Tag("refusal")]
     | Annotated[ToolCallItem, Tag("tool_call")]
+    | Annotated[ServerToolItem, Tag("server_tool")]
+    | Annotated[CitationItem, Tag("citation")]
     | Annotated[BaseUnknown, Tag(UNKNOWN)],
     Discriminator(by_type(OUTPUT_TAGS)),
 ]
@@ -83,8 +145,8 @@ class EchoResponse(BaseAPITypeExtra):
         model: The model that generated it.
         output: What the model wrote and called, in order.
         stop: Why it stopped: ``end`` or ``tool_calls`` when it reached
-            its end, ``max_tokens``, ``refusal`` or another reason when
-            it stopped early.
+            its end, ``max_tokens``, ``refusal``, ``paused`` or another
+            reason when it stopped early.
         usage: Its token counts.
     """
 
@@ -161,6 +223,42 @@ class ToolCallDoneEvent(BaseAPITypeExtra):
     id: str
 
 
+class ServerToolStartEvent(BaseAPITypeExtra):
+    """A built-in tool call begins.
+
+    Attributes:
+        type: Always ``server_tool_start``.
+        call: The call as it is known at the start.
+    """
+
+    type: Literal["server_tool_start"] = "server_tool_start"
+    call: ServerToolItem
+
+
+class ServerToolDoneEvent(BaseAPITypeExtra):
+    """A built-in tool call has its result, or failed.
+
+    Attributes:
+        type: Always ``server_tool_done``.
+        call: The whole call.
+    """
+
+    type: Literal["server_tool_done"] = "server_tool_done"
+    call: ServerToolItem
+
+
+class CitationEvent(BaseAPITypeExtra):
+    """A source of the text.
+
+    Attributes:
+        type: Always ``citation``.
+        citation: The source.
+    """
+
+    type: Literal["citation"] = "citation"
+    citation: CitationItem
+
+
 class DoneEvent(BaseAPITypeExtra):
     """The last event of a complete stream.
 
@@ -183,6 +281,9 @@ EVENT_TAGS = {
     "tool_call_start": "tool_call_start",
     "tool_call_delta": "tool_call_delta",
     "tool_call_done": "tool_call_done",
+    "server_tool_start": "server_tool_start",
+    "server_tool_done": "server_tool_done",
+    "citation": "citation",
     "done": "done",
 }
 """Tag of each event ``type`` the echo types model."""
@@ -193,6 +294,9 @@ type EchoEvent = Annotated[
     | Annotated[ToolCallStartEvent, Tag("tool_call_start")]
     | Annotated[ToolCallDeltaEvent, Tag("tool_call_delta")]
     | Annotated[ToolCallDoneEvent, Tag("tool_call_done")]
+    | Annotated[ServerToolStartEvent, Tag("server_tool_start")]
+    | Annotated[ServerToolDoneEvent, Tag("server_tool_done")]
+    | Annotated[CitationEvent, Tag("citation")]
     | Annotated[DoneEvent, Tag("done")]
     | Annotated[BaseUnknown, Tag(UNKNOWN)],
     Discriminator(by_type(EVENT_TAGS)),

@@ -5,6 +5,13 @@ from __future__ import annotations
 from aiollm.types.requests.base import (
     BaseRequest,
 )
+from aiollm.types.requests.builtin import (
+    BuiltinTool,
+    CodeExecution,
+    ProviderTool,
+    UserLocation,
+    WebSearch,
+)
 from aiollm.types.requests.content import (
     ContentPart,
     DocumentMediaType,
@@ -35,6 +42,8 @@ from aiollm.types.requests.upload import (
 
 __all__ = [
     "BaseRequest",
+    "BuiltinTool",
+    "CodeExecution",
     "ContentPart",
     "DocumentMediaType",
     "DocumentPart",
@@ -49,11 +58,14 @@ __all__ = [
     "NativeOutput",
     "NoProviderOptions",
     "ProviderFile",
+    "ProviderTool",
     "TextPart",
     "Tool",
     "ToolCall",
     "ToolCallTurn",
     "ToolResult",
     "Turn",
+    "UserLocation",
+    "WebSearch",
     "tool",
 ]

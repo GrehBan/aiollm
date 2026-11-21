@@ -5,6 +5,10 @@ from __future__ import annotations
 from aiollm.types.responses.base import (
     BaseResponse,
 )
+from aiollm.types.responses.builtin import (
+    Citation,
+    ServerToolCall,
+)
 from aiollm.types.responses.events import (
     GENERATION_TERMINAL,
     BaseResponseEvent,
@@ -13,6 +17,7 @@ from aiollm.types.responses.events import (
     OtherEvent,
     RawResponseEvent,
     ReasoningDeltaEvent,
+    ServerToolCallEvent,
     TextDeltaEvent,
     ToolCallDeltaEvent,
     ToolCallDoneEvent,
@@ -29,6 +34,7 @@ from aiollm.types.responses.generation import (
 __all__ = [
     "BaseResponse",
     "BaseResponseEvent",
+    "Citation",
     "CompletedEvent",
     "GENERATION_TERMINAL",
     "GenerationEvent",
@@ -36,6 +42,8 @@ __all__ = [
     "OtherEvent",
     "RawResponseEvent",
     "ReasoningDeltaEvent",
+    "ServerToolCall",
+    "ServerToolCallEvent",
     "StoredFile",
     "TextDeltaEvent",
     "TokenUsage",

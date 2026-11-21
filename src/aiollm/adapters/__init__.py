@@ -17,6 +17,7 @@ from aiollm.adapters.protocols import (
 )
 from aiollm.adapters.stop import Stop
 from aiollm.adapters.validation import (
+    check_builtin_tools,
     check_conversation,
     check_files,
     checked_options,
@@ -35,6 +36,7 @@ __all__ = [
     "IConversion",
     "IStreamAdapter",
     "Stop",
+    "check_builtin_tools",
     "check_conversation",
     "check_files",
     "checked_options",

@@ -43,7 +43,9 @@ class GenerateParams(BaseAPIType):
         end_user_id: An opaque id of the end user.
         effort: How much work the model puts in, such as ``high``.
         output_schema: A JSON Schema the text must follow.
-        tools: The tools the model may call.
+        tools: The tools the model may call, and the built-in tools it
+            may use, each an object with a ``type`` (``web_search``,
+            ``code_execution``, ...) in place of ``name``.
         tool_choice: ``auto``, ``none``, ``required`` or
             ``{"name": ...}`` of one tool.
         parallel_tool_calls: Whether several calls may come at once.

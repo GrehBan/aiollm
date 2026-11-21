@@ -27,7 +27,36 @@ from typing_extensions import TypedDict
 from aiollm.enums import Effort, Provider, Role, ToolChoice
 from aiollm.types.base import BaseAPIType
 from aiollm.types.requests.base import BaseRequest
+from aiollm.types.requests.builtin import (
+    BUILTIN_TOOLS,
+    BuiltinTool,
+    CodeExecution,
+    WebSearch,
+)
 from aiollm.types.requests.content import ContentPart
+from aiollm.types.requests.schema import JSONSchema, JSONValue
+
+
+class NativeOutput(BaseAPIType):
+    """A response's output as its provider's next request takes it.
+
+    The provider's own record of the turn: OpenAI's output items, its
+    reasoning items with ``encrypted_content`` among them, or Anthropic's
+    content blocks, thinking with its ``signature`` among them, each as
+    the response sent it. The provider's adapter sends it in place of the
+    shared fields of the turn, so the model sees its reasoning again;
+    another provider's adapter sends the shared fields only, since it
+    cannot read it.
+
+    Attributes:
+        provider: The provider whose output it is.
+        items: The items, in output order.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: Provider
+    items: Annotated[list[dict[str, JSONValue]], Field(min_length=1)]
 
 
 class Turn(BaseAPIType):
@@ -43,6 +72,10 @@ class Turn(BaseAPIType):
         content: Text of the turn, or its parts in order: text, images
             and documents, at least one. Only a ``user`` turn takes
             parts; an ``assistant`` turn is text.
+        native: The generation's own output, which its provider gets
+            back in place of ``content``: reasoning, and the calls and
+            results of built-in tools. Only an ``assistant`` turn has
+            it; ``GenerationResponse.to_turn()`` sets it.
 
     Example:
         >>> Turn.user("Hi")
@@ -61,21 +94,28 @@ class Turn(BaseAPIType):
     type: Literal["text"] = "text"
     role: Role
     content: str | Annotated[list[ContentPart], Field(min_length=1)]
+    native: NativeOutput | MISSING = MISSING
 
     @model_validator(mode="after")
     def _parts_from_the_user(self) -> Self:
-        """Check that only a ``user`` turn has parts.
+        """Check that only a ``user`` turn has parts, only the model native.
 
         Returns:
             The turn.
 
         Raises:
-            ValueError: A turn of another role has parts.
+            ValueError: A turn of another role has parts, or a ``user``
+                turn has ``native`` output.
         """
         if not isinstance(self.content, str) and self.role is not Role.USER:
             message = (
                 f"only a {Role.USER.value!r} turn takes parts; "
                 f"give a {self.role.value!r} turn its text"
+            )
+            raise ValueError(message)
+        if self.native is not MISSING and self.role is not Role.ASSISTANT:
+            message = (
+                f"only an {Role.ASSISTANT.value!r} turn has native output"
             )
             raise ValueError(message)
         return self
@@ -95,25 +135,23 @@ class Turn(BaseAPIType):
         return cls(role=Role.USER, content=content)
 
     @classmethod
-    def assistant(cls, content: str) -> Self:
+    def assistant(
+        cls,
+        content: str,
+        *,
+        native: NativeOutput | MISSING = MISSING,
+    ) -> Self:
         """Create a turn of the model, such as an earlier answer.
 
         Args:
             content: Text of the turn.
+            native: The generation's own output, as
+                ``GenerationResponse.native``, if the turn is one.
 
         Returns:
             The turn.
         """
-        return cls(role=Role.ASSISTANT, content=content)
-
-
-type JSONValue = (
-    str | int | float | bool | None | list[JSONValue] | dict[str, JSONValue]
-)
-"""A JSON value, as ``json.loads`` gives it."""
-
-type JSONSchema = dict[str, JSONValue]
-"""A JSON Schema, as a JSON object."""
+        return cls(role=Role.ASSISTANT, content=content, native=native)
 
 
 TOOL_NAME_PATTERN: Final = r"^[a-zA-Z0-9_-]{1,128}$"
@@ -745,28 +783,6 @@ class ToolCall(BaseAPIType):
         return value
 
 
-class NativeOutput(BaseAPIType):
-    """A response's output as its provider's next request takes it.
-
-    The provider's own record of the turn: OpenAI's output items, its
-    reasoning items with ``encrypted_content`` among them, or Anthropic's
-    content blocks, thinking with its ``signature`` among them, each as
-    the response sent it. The provider's adapter sends it in place of the
-    shared fields of the turn, so the model sees its reasoning again;
-    another provider's adapter sends the shared fields only, since it
-    cannot read it.
-
-    Attributes:
-        provider: The provider whose output it is.
-        items: The items, in output order.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    provider: Provider
-    items: Annotated[list[dict[str, JSONValue]], Field(min_length=1)]
-
-
 class ToolCallTurn(BaseAPIType):
     """A turn of the model that calls tools.
 
@@ -849,7 +865,7 @@ class NoProviderOptions(TypedDict, total=False, closed=True):
     """
 
 
-type ToolType = Tool | Callable[..., Any]
+type ToolType = Tool | Callable[..., Any] | BuiltinTool
 
 
 class GenerationRequest(BaseRequest):
@@ -876,16 +892,21 @@ class GenerationRequest(BaseRequest):
             text is then JSON. Each provider takes its own subset of
             JSON Schema and answers 400 to the rest; the schema is sent
             as it is, never rewritten.
-        tools: A single ``Tool`` or callable, or a sequence of them,
-            describing functions the model may call. Callables are
-            converted to ``Tool`` definitions using their signatures
-            and annotations; decorated callables reuse their cached
-            definitions. The resulting list must contain at least one
-            tool, and tool names must be unique.
+        tools: A single tool or a sequence of them: functions the
+            model may call (a ``Tool`` or a callable) and built-in tools
+            the provider runs (``WebSearch``, ``CodeExecution``, a
+            ``ProviderTool``), in one list. Callables are converted to
+            ``Tool`` definitions using their signatures and annotations;
+            decorated callables reuse their cached definitions. The
+            resulting list must contain at least one tool, function
+            names must be unique, and ``WebSearch`` and
+            ``CodeExecution`` come at most once. ``request.tools`` holds
+            the functions and ``request.builtin_tools`` the built-in
+            tools.
         tool_choice: Whether the model calls a tool (a ``ToolChoice``) or
-            which one (a ``ForcedTool`` naming one of ``tools``); the
-            providers' default is ``ToolChoice.AUTO``. Only with
-            ``tools``.
+            which one (a ``ForcedTool`` naming one of the function
+            tools); the providers' default is ``ToolChoice.AUTO``. Only
+            with ``tools``.
         parallel_tool_calls: Whether the model may call several tools in
             one response; both providers allow it by default. Only with
             ``tools``, and not with ``ToolChoice.NONE``.
@@ -933,21 +954,46 @@ class GenerationRequest(BaseRequest):
 
     @property
     def tools(self) -> list[Tool] | MISSING:
-        """Return the tools after converting callable definitions."""
-        return cast(list[Tool] | MISSING, self.tools_)
+        """Return the function tools after converting callables.
+
+        ``MISSING`` when the request has no function tool, even if it
+        has built-in tools; see ``builtin_tools``.
+        """
+        if self.tools_ is MISSING:
+            return MISSING
+        functions = [
+            tool
+            for tool in cast(list[Any], self.tools_)
+            if isinstance(tool, Tool)
+        ]
+        return functions or MISSING
+
+    @property
+    def builtin_tools(self) -> list[BuiltinTool]:
+        """Return the built-in tools of the request, empty without any."""
+        if self.tools_ is MISSING:
+            return []
+        return [
+            tool
+            for tool in cast(list[Any], self.tools_)
+            if isinstance(tool, BUILTIN_TOOLS)
+        ]
 
     @field_validator("tools_", mode="before")
     @classmethod
-    def _callables_to_tools(cls, value: Any) -> list[Tool] | MISSING:
+    def _callables_to_tools(
+        cls, value: Any
+    ) -> list[Tool | BuiltinTool] | MISSING:
         """Normalize tool definitions and callables into a list of tools.
 
         Args:
             value: A tool, callable, sequence of tools and callables,
-                or ``MISSING`` if no tools were provided.
+                or ``MISSING`` if no tools were provided; built-in
+                tools stay as they are.
 
         Returns:
-            A list of normalized tool definitions, or ``MISSING``
-            if no tools were provided.
+            A list of normalized tool definitions and built-in tools,
+            or ``MISSING`` if no tools were provided.
 
         Raises:
             ValueError: The input is not a tool, callable, or sequence
@@ -956,7 +1002,7 @@ class GenerationRequest(BaseRequest):
         """
         if value is MISSING:
             return value
-        if isinstance(value, (Tool, _tool)) or callable(value):
+        if isinstance(value, (Tool, _tool, *BUILTIN_TOOLS)) or callable(value):
             value = [value]
         elif not isinstance(value, Sequence):
             raise ValueError(
@@ -964,10 +1010,10 @@ class GenerationRequest(BaseRequest):
                 f"callable or sequence, got {type(value).__name__}"
             )
 
-        result: list[Tool] = []
+        result: list[Tool | BuiltinTool] = []
 
         for item in value:
-            if isinstance(item, Tool):
+            if isinstance(item, (Tool, *BUILTIN_TOOLS)):
                 result.append(item)
             elif isinstance(item, _tool):
                 result.append(item.tool)
@@ -988,11 +1034,12 @@ class GenerationRequest(BaseRequest):
 
         Raises:
             ValueError: ``tool_choice`` or ``parallel_tool_calls`` comes
-                without ``tools``; two tools share a name; a
-                ``ForcedTool`` names no tool of the request; or
+                without ``tools``; two function tools share a name;
+                ``WebSearch`` or ``CodeExecution`` comes twice; a
+                ``ForcedTool`` names no function tool of the request; or
                 ``parallel_tool_calls`` comes with ``ToolChoice.NONE``.
         """
-        if self.tools is MISSING:
+        if self.tools_ is MISSING:
             if self.tool_choice is not MISSING:
                 message = "tool_choice needs tools"
                 raise ValueError(message)
@@ -1000,10 +1047,15 @@ class GenerationRequest(BaseRequest):
                 message = "parallel_tool_calls needs tools"
                 raise ValueError(message)
             return self
-        names = [tool.name for tool in self.tools]
+        functions = self.tools
+        names = [] if functions is MISSING else [t.name for t in functions]
         if len(set(names)) != len(names):
             message = f"tool names must be unique, got {names}"
             raise ValueError(message)
+        for shared in (WebSearch, CodeExecution):
+            if sum(isinstance(t, shared) for t in self.builtin_tools) > 1:
+                message = f"{shared.__name__} may be given only once"
+                raise ValueError(message)
         choice = self.tool_choice
         if isinstance(choice, ForcedTool) and choice.name not in names:
             message = f"tool_choice names {choice.name!r}, not a tool"
