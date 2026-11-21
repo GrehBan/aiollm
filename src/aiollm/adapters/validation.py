@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +11,7 @@ from typing_extensions import is_typeddict
 
 from aiollm.enums import Role
 from aiollm.exceptions import RequestValidationError
+from aiollm.types.requests.builtin import ProviderTool
 from aiollm.types.requests.content import TextPart
 from aiollm.types.requests.generation import ToolCallTurn, ToolResult, Turn
 
@@ -205,7 +206,9 @@ def check_conversation(request: GenerationRequest, provider: Provider) -> None:
 
     Anthropic rejects a last ``assistant`` turn (prefill) on current
     models, and OpenAI gives it a meaning of its own, so a conversation
-    ends with a ``user`` turn or a tool result. Both answer 400 to a call
+    ends with a ``user`` turn or a tool result; the one exception is an
+    ``assistant`` turn with ``native`` output, the turn of a paused
+    generation, which goes back to be continued. Both answer 400 to a call
     without its result and to a result without its call (seen in a live
     check, 2026-11-06), and Anthropic to results that do not follow
     their call at once, so the results of a turn of calls come right
@@ -227,10 +230,11 @@ def check_conversation(request: GenerationRequest, provider: Provider) -> None:
         problem is None
         and isinstance(last, Turn)
         and last.role is not Role.USER
+        and last.native is MISSING
     ):
         problem = (
-            f"the last turn must be a {Role.USER.value!r} turn or a tool "
-            f"result, got {last.role.value!r}"
+            f"the last turn must be a {Role.USER.value!r} turn, a tool "
+            f"result or a turn with native output, got {last.role.value!r}"
         )
     if problem is not None:
         raise RequestValidationError(problem, provider=provider, field="input")
@@ -267,6 +271,46 @@ def check_files(request: GenerationRequest, provider: Provider) -> None:
             )
             raise RequestValidationError(
                 message, provider=provider, field="input"
+            )
+
+
+def check_builtin_tools(
+    request: GenerationRequest,
+    provider: Provider,
+    shared: Collection[type],
+) -> None:
+    """Check that the provider can run the built-in tools of a request.
+
+    A provider takes some of the shared built-in tools (``WebSearch``,
+    ``CodeExecution``) and only its own ``ProviderTool``s; a tool it
+    cannot take is refused before anything is sent, since leaving it out
+    would give an answer the caller did not ask for.
+
+    Args:
+        request: The shared request.
+        provider: Provider the request is for.
+        shared: The classes of the shared built-in tools the provider
+            takes, such as ``(WebSearch, CodeExecution)``.
+
+    Raises:
+        RequestValidationError: A shared tool is not in ``shared``, or a
+            ``ProviderTool`` belongs to another provider; ``field`` is
+            ``tools``.
+    """
+    for tool in request.builtin_tools:
+        if isinstance(tool, ProviderTool):
+            if tool.provider != provider:
+                message = (
+                    f"a tool of {tool.provider.value} cannot run at "
+                    f"{provider.value}"
+                )
+                raise RequestValidationError(
+                    message, provider=provider, field="tools"
+                )
+        elif not isinstance(tool, tuple(shared)):
+            message = f"{provider.value} has no {type(tool).__name__} tool"
+            raise RequestValidationError(
+                message, provider=provider, field="tools"
             )
 
 

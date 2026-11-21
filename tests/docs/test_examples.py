@@ -45,6 +45,9 @@ from aiollm.types.requests import GenerationRequest
 from aiollm.testing import LocalAPI, Reply
 from aiollm.testing.aiohttp import Recorder
 from aiollm.testing.contract.generation import events as sse
+from aiollm.testing.echo import EchoClient
+from aiollm.testing.echo import session_factory as echo_session_factory
+from tests.testing import echo_payloads
 from tests.docs.payloads import OPENAI_OVERLOADED, openai_called_stream
 from tests.docs.payloads import OPENAI_RESPONSE as OPENAI_EXAMPLE
 
@@ -147,6 +150,10 @@ RESOURCES: Final = "resources.py"
 OPENAI_FILES: Final = "openai_files.py"
 ANTHROPIC_FILES: Final = "anthropic_files.py"
 SHARED_FILES: Final = "shared_files.py"
+BUILTIN_TOOLS: Final = "builtin_tools.py"
+BUILTIN_TOOLS_PROVIDER: Final = "builtin_tools_provider.py"
+BUILTIN_TOOLS_STREAM: Final = "builtin_tools_stream.py"
+BUILTIN_TOOLS_CONTINUE: Final = "builtin_tools_continue.py"
 
 TESTED: Final = (
     QUICK_START,
@@ -180,6 +187,10 @@ TESTED: Final = (
     OPENAI_FILES,
     ANTHROPIC_FILES,
     SHARED_FILES,
+    BUILTIN_TOOLS,
+    BUILTIN_TOOLS_PROVIDER,
+    BUILTIN_TOOLS_STREAM,
+    BUILTIN_TOOLS_CONTINUE,
 )
 """The title of every example a test below runs."""
 
@@ -1377,3 +1388,86 @@ async def test_shared_files(
             {"type": "text", "text": question},
         ]
     assert (delete.method, delete.raw_path) == ("DELETE", "/v1/files/file_1")
+
+
+@pytest.fixture
+def echo(
+    api: LocalAPI, monkeypatch: pytest.MonkeyPatch
+) -> EchoClient:
+    """Build the client of the echo provider, sent to the local server.
+
+    The built-in tool examples are typed on ``IGenerationClient``, so they
+    run on the one provider of the test kit that runs built-in tools.
+    """
+    monkeypatch.setattr(echo_session_factory, "api", api)
+    return EchoClient("sk-...")
+
+
+async def test_builtin_tools(
+    examples: Examples, recorder: Recorder, echo: EchoClient
+) -> None:
+    recorder.reply(Reply(json=echo_payloads.SEARCHED))
+    await examples.run(BUILTIN_TOOLS)
+
+    async with echo:
+        response = await examples.research(echo)
+
+    assert [c.kind.value for c in response.server_tool_calls] == ["web_search"]
+    assert [c.url for c in response.citations] == ["https://example.com/paris"]
+    assert json.loads(recorder.last.body)["tools"] == [
+        {
+            "type": "web_search",
+            "allowed_domains": ["example.com"],
+            "user_location": {"country": "FR", "city": "Paris"},
+        },
+        {"type": "code_execution"},
+    ]
+
+
+async def test_builtin_tools_provider(examples: Examples) -> None:
+    await examples.run(BUILTIN_TOOLS_PROVIDER)
+
+    tool = examples.file_search
+    assert tool.provider == "openai"
+    assert tool.definition["type"] == "file_search"
+
+
+async def test_builtin_tools_stream(
+    examples: Examples,
+    recorder: Recorder,
+    echo: EchoClient,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recorder.reply(sse(echo_payloads.SEARCHED_STREAM))
+    await examples.run(BUILTIN_TOOLS_STREAM)
+
+    async with echo:
+        completed = await examples.search_streamed(echo)
+
+    assert completed.server_tool_calls[0].id == "search_1"
+    assert capsys.readouterr().out.splitlines() == [
+        "started web_search",
+        "done web_search",
+    ]
+
+
+async def test_builtin_tools_continue(
+    examples: Examples, recorder: Recorder, echo: EchoClient
+) -> None:
+    recorder.reply(
+        Reply(json=echo_payloads.PAUSED),
+        Reply(json=echo_payloads.SEARCHED),
+    )
+    await examples.run(BUILTIN_TOOLS_CONTINUE)
+
+    async with echo:
+        response = await examples.research_to_the_end(echo, "Weather?")
+
+    assert response.text == "It is sunny."
+    first, second = recorder.requests
+    assert json.loads(second.body)["input"] == [
+        {"role": "user", "content": "Weather?"},
+        {"role": "assistant", "output": echo_payloads.PAUSED_ITEMS},
+    ]
+    assert len(recorder.requests) == 2
+    assert "tools" in json.loads(first.body)

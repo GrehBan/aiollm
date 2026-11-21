@@ -13,23 +13,36 @@ from pydantic import MISSING
 from aiollm.adapters.base import BaseCompositeAdapter
 from aiollm.adapters.stop import Stop
 from aiollm.adapters.validation import (
+    check_builtin_tools,
     check_conversation,
     check_files,
     checked_options,
     merge_options,
     request_errors,
 )
-from aiollm.enums import IncompleteReason, Role
+from aiollm.enums import (
+    CitationKind,
+    IncompleteReason,
+    Role,
+    ServerToolKind,
+    ServerToolPhase,
+    ServerToolStatus,
+)
 from aiollm.http.exceptions.response import APIResponseError
 from aiollm.testing.echo.api import PROVIDER
 from aiollm.testing.echo.methods import Generate, StreamGenerate
 from aiollm.testing.echo.types import (
+    CitationEvent,
+    CitationItem,
     DoneEvent,
     EchoEvent,
     EchoGenerationOptions,
     EchoResponse,
     EchoUsage,
     RefusalItem,
+    ServerToolDoneEvent,
+    ServerToolItem,
+    ServerToolStartEvent,
     StartEvent,
     TextItem,
     ToolCallItem,
@@ -45,6 +58,12 @@ from aiollm.testing.echo.types import (
 )
 from aiollm.testing.echo.types import (
     ToolCallStartEvent as EchoToolCallStart,
+)
+from aiollm.types.requests.builtin import (
+    BuiltinTool,
+    CodeExecution,
+    ProviderTool,
+    WebSearch,
 )
 from aiollm.types.requests.content import (
     ContentPart,
@@ -62,10 +81,12 @@ from aiollm.types.requests.generation import (
     ToolResult,
     Turn,
 )
+from aiollm.types.responses.builtin import Citation, ServerToolCall
 from aiollm.types.responses.events import (
     CompletedEvent,
     GenerationEvent,
     OtherEvent,
+    ServerToolCallEvent,
     TextDeltaEvent,
     ToolCallDeltaEvent,
     ToolCallDoneEvent,
@@ -82,6 +103,7 @@ FINISHED: Final = frozenset({"end", "tool_calls"})
 INCOMPLETE_REASONS: Final[Mapping[str, IncompleteReason]] = {
     "max_tokens": IncompleteReason.MAX_TOKENS,
     "refusal": IncompleteReason.REFUSAL,
+    "paused": IncompleteReason.PAUSED,
 }
 """Shared reason of each early stop that has one; any other is ``OTHER``."""
 
@@ -89,10 +111,10 @@ INCOMPLETE_REASONS: Final[Mapping[str, IncompleteReason]] = {
 def to_input(source: str | Sequence[InputItem]) -> list[dict[str, Any]]:
     """Convert the shared ``input`` into the echo ``input``.
 
-    A text becomes one ``user`` message. A turn of calls with echo's own
-    ``native`` output goes back as that output; any other becomes an
-    ``assistant`` message with its text and ``tool_calls``. A result is
-    a ``tool`` message.
+    A text becomes one ``user`` message. A turn, or a turn of calls, with
+    echo's own ``native`` output goes back as that output; any other
+    turn of calls becomes an ``assistant`` message with its text and
+    ``tool_calls``. A result is a ``tool`` message.
 
     Args:
         source: The text or the conversation of the shared request.
@@ -105,6 +127,12 @@ def to_input(source: str | Sequence[InputItem]) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     for item in source:
         match item:
+            case Turn(native=NativeOutput(provider=provider) as native) if (
+                provider == PROVIDER
+            ):
+                messages.append(
+                    {"role": item.role.value, "output": native.items}
+                )
             case Turn():
                 messages.append(
                     {"role": item.role.value, "content": _content(item)}
@@ -224,6 +252,66 @@ def to_stop(stop: str, refusal: str | None) -> Stop:
     )
 
 
+def to_server_call(item: ServerToolItem) -> ServerToolCall:
+    """Convert a built-in tool call.
+
+    Args:
+        item: The echo item.
+
+    Returns:
+        The shared call; a kind or status the library lacks is ``OTHER``
+        or ``FAILED``.
+    """
+    kinds = {kind.value: kind for kind in ServerToolKind}
+    statuses = {status.value: status for status in ServerToolStatus}
+    return ServerToolCall(
+        id=item.id,
+        kind=kinds.get(item.kind, ServerToolKind.OTHER),
+        status=statuses.get(item.status, ServerToolStatus.FAILED),
+        queries=item.queries,
+        code=item.code,
+        error=item.error,
+        raw=[item.model_dump(mode="json", exclude_unset=True)],
+    )
+
+
+def to_citation(item: CitationItem) -> Citation:
+    """Convert a source.
+
+    Args:
+        item: The echo item.
+
+    Returns:
+        The shared citation.
+    """
+    return Citation(
+        kind=CitationKind(item.kind),
+        url=item.url,
+        title=item.title,
+        file_id=item.file_id,
+        container_id=item.container_id,
+        filename=item.filename,
+        cited_text=item.cited_text,
+        start_index=item.start_index,
+        end_index=item.end_index,
+    )
+
+
+def _tool_definition(tool: BuiltinTool) -> dict[str, Any]:
+    """Convert a built-in tool of the request.
+
+    Args:
+        tool: The shared tool, or one of echo's own.
+
+    Returns:
+        Its object for ``tools``: a ``ProviderTool``'s definition as it
+        is, a shared tool by its fields.
+    """
+    if isinstance(tool, ProviderTool):
+        return dict(tool.definition)
+    return tool.model_dump(mode="json")
+
+
 def _native(items: list[dict[str, Any]]) -> NativeOutput | None:
     """Keep the output as the next request takes it back.
 
@@ -319,6 +407,16 @@ class EchoGenerationAdapter(
             item.text for item in raw.output if isinstance(item, RefusalItem)
         ]
         stop = to_stop(raw.stop, refusals[0] if refusals else None)
+        citations = [
+            to_citation(item)
+            for item in raw.output
+            if isinstance(item, CitationItem)
+        ]
+        server_calls = [
+            to_server_call(item)
+            for item in raw.output
+            if isinstance(item, ServerToolItem)
+        ]
         return GenerationResponse[EchoResponse](
             id=raw.id,
             provider=self.provider,
@@ -333,6 +431,8 @@ class EchoGenerationAdapter(
                 for item in raw.output
                 if isinstance(item, ToolCallItem)
             ],
+            server_tool_calls=server_calls,
+            citations=citations,
             native=_native(
                 [
                     item.model_dump(mode="json", exclude_unset=True)
@@ -367,8 +467,10 @@ class EchoGenerationAdapter(
 
         Text deltas become ``TextDeltaEvent``; the events of a call
         ``ToolCallStartEvent``, ``ToolCallDeltaEvent`` and
-        ``ToolCallDoneEvent``; ``done`` becomes ``CompletedEvent`` with
-        what the stream told; every other event is an ``OtherEvent``.
+        ``ToolCallDoneEvent``; those of a built-in tool call
+        ``ServerToolCallEvent``; ``done`` becomes ``CompletedEvent``
+        with what the stream told, the built-in calls and citations
+        among it; every other event is an ``OtherEvent``.
 
         Args:
             items: The events the echo API sent.
@@ -407,6 +509,11 @@ class EchoGenerationAdapter(
                         call=state.call(item.id), raw=item
                     )
                     continue
+                case ServerToolStartEvent() | ServerToolDoneEvent():
+                    yield state.server_event(item)
+                    continue
+                case CitationEvent():
+                    state.citations.append(item.citation)
                 case DoneEvent():
                     yield state.completed(item)
                     continue
@@ -430,7 +537,16 @@ class EchoGenerationAdapter(
         """
         check_conversation(request, self.provider)
         check_files(request, self.provider)
+        check_builtin_tools(request, self.provider, (WebSearch, CodeExecution))
         tools = request.tools
+        definitions = [
+            *(
+                []
+                if tools is MISSING
+                else [t.model_dump(mode="json") for t in tools]
+            ),
+            *map(_tool_definition, request.builtin_tools),
+        ]
         fields: dict[str, Any] = {
             "model": request.model,
             "input": to_input(request.input),
@@ -441,11 +557,7 @@ class EchoGenerationAdapter(
                 MISSING if request.effort is MISSING else request.effort.value
             ),
             "output_schema": request.output_schema,
-            "tools": (
-                MISSING
-                if tools is MISSING
-                else [tool.model_dump(mode="json") for tool in tools]
-            ),
+            "tools": definitions or MISSING,
             "tool_choice": _tool_choice(request),
             "parallel_tool_calls": request.parallel_tool_calls,
         }
@@ -477,6 +589,8 @@ class _StreamState:
         text: The text deltas.
         calls: The name and argument pieces of each call, by id, in the
             order they started.
+        server_calls: The built-in tool calls that are done.
+        citations: The sources of the text.
     """
 
     started: StartEvent | None = None
@@ -484,6 +598,10 @@ class _StreamState:
     calls: dict[str, tuple[str, list[str]]] = field(
         default_factory=dict[str, tuple[str, list[str]]]
     )
+    server_calls: list[ServerToolItem] = field(
+        default_factory=list[ServerToolItem]
+    )
+    citations: list[CitationItem] = field(default_factory=list[CitationItem])
 
     def pieces(self, call_id: str) -> list[str]:
         """Find the argument pieces of a call.
@@ -519,6 +637,27 @@ class _StreamState:
             id=call_id, name=self.calls[call_id][0], arguments=arguments
         )
 
+    def server_event(
+        self, item: ServerToolStartEvent | ServerToolDoneEvent
+    ) -> ServerToolCallEvent[EchoEvent]:
+        """Convert the event of a built-in tool call.
+
+        Args:
+            item: The echo event; a ``server_tool_done`` is kept for the
+                end of the stream.
+
+        Returns:
+            The shared event of that phase.
+        """
+        done = isinstance(item, ServerToolDoneEvent)
+        if done:
+            self.server_calls.append(item.call)
+        return ServerToolCallEvent[EchoEvent](
+            phase=ServerToolPhase.DONE if done else ServerToolPhase.STARTED,
+            call=to_server_call(item.call),
+            raw=item,
+        )
+
     def completed(self, done: DoneEvent) -> CompletedEvent[EchoEvent]:
         """Build the event of a complete stream.
 
@@ -526,7 +665,8 @@ class _StreamState:
             done: The stream's ``done`` event.
 
         Returns:
-            The completed event, its output put together as ``native``.
+            The completed event, its output put together as ``native``,
+            its built-in calls and citations in their own fields.
 
         Raises:
             APIResponseError: ``done`` came without ``start``.
@@ -537,9 +677,16 @@ class _StreamState:
         stop = to_stop(done.stop, done.refusal)
         text = "".join(self.text) if self.text else None
         calls = [self.call(call_id) for call_id in self.calls]
-        items: list[dict[str, Any]] = []
+        items: list[dict[str, Any]] = [
+            call.model_dump(mode="json", exclude_unset=True)
+            for call in self.server_calls
+        ]
         if text is not None:
             items.append({"type": "text", "text": text})
+        items += [
+            citation.model_dump(mode="json", exclude_unset=True)
+            for citation in self.citations
+        ]
         items += [
             {
                 "type": "tool_call",
@@ -559,6 +706,8 @@ class _StreamState:
             raw_incomplete_reason=stop.raw_incomplete_reason,
             refusal=stop.refusal,
             tool_calls=calls,
+            server_tool_calls=[to_server_call(c) for c in self.server_calls],
+            citations=[to_citation(c) for c in self.citations],
             native=_native(items),
             raw=done,
         )

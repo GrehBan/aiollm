@@ -380,13 +380,15 @@ async def stream_round(
     return [*conversation, *results]
 ```
 
-## Provider-specific tools
+## Built-in tools
 
 The shared callable workflow covers function tools defined by your
-application. Provider-hosted tools and their result formats are not shared:
-for example, OpenAI web search or file search and Anthropic server tools must
-be sent through the providers' own `CreateResponse` or `CreateMessage`
-methods. `tool_runner` executes callbacks attached to shared `Tool`
-definitions; it does not execute provider-hosted tools.
+application. Tools the provider runs itself (web search, code execution, file
+search, MCP, ...) are *built-in tools*: `WebSearch()`, `CodeExecution()` and
+`ProviderTool(...)` go in the same `tools=` list, their calls come back in
+`response.server_tool_calls` and never in `tool_calls`, and nothing runs in
+your code; see [Built-in tools](builtin-tools.md). `tool_runner` executes
+callbacks attached to shared `Tool` definitions only; a built-in tool needs no
+callback.
 
 What each field becomes for each provider is listed in [Shared field mapping](../unification.md).

@@ -174,6 +174,8 @@ TAKEN_AS_IS = {
     "GenerationResponse.text",
     "GenerationResponse.reasoning",
     "GenerationResponse.tool_calls",
+    "GenerationResponse.server_tool_calls",
+    "GenerationResponse.citations",
     "GenerationResponse.native",
     "GenerationResponse.raw",
     "ToolCall.id",
@@ -186,6 +188,8 @@ TAKEN_AS_IS = {
     "CompletedEvent.text",
     "CompletedEvent.reasoning",
     "CompletedEvent.tool_calls",
+    "CompletedEvent.server_tool_calls",
+    "CompletedEvent.citations",
     "CompletedEvent.native",
     "CompletedEvent.raw",
 }

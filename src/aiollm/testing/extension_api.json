@@ -11,6 +11,7 @@
     "Stop"
   ],
   "aiollm.adapters.validation": [
+    "check_builtin_tools",
     "check_conversation",
     "check_files",
     "checked_options",
@@ -25,10 +26,14 @@
   ],
   "aiollm.enums": [
     "BodyFormat",
+    "CitationKind",
     "IncompleteReason",
     "Provider",
     "ResponseFormat",
     "Role",
+    "ServerToolKind",
+    "ServerToolPhase",
+    "ServerToolStatus",
     "ToolChoice"
   ],
   "aiollm.exceptions": [
@@ -93,6 +98,12 @@
     "FieldValues",
     "TopLevelError"
   ],
+  "aiollm.types.requests.builtin": [
+    "BuiltinTool",
+    "CodeExecution",
+    "ProviderTool",
+    "WebSearch"
+  ],
   "aiollm.types.requests.content": [
     "ContentPart",
     "DocumentPart",
@@ -114,11 +125,16 @@
   "aiollm.types.requests.upload": [
     "FileUpload"
   ],
+  "aiollm.types.responses.builtin": [
+    "Citation",
+    "ServerToolCall"
+  ],
   "aiollm.types.responses.events": [
     "CompletedEvent",
     "GenerationEvent",
     "OtherEvent",
     "ReasoningDeltaEvent",
+    "ServerToolCallEvent",
     "TextDeltaEvent",
     "ToolCallDeltaEvent",
     "ToolCallDoneEvent",

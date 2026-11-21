@@ -8,12 +8,12 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter
 
-from aiollm.enums import IncompleteReason
+from aiollm.enums import IncompleteReason, ServerToolKind, ServerToolStatus
 from aiollm.http.exceptions.response import APIResponseError
-from aiollm.testing.echo import EchoGenerationAdapter
-from aiollm.testing.echo.generation import to_stop
-from aiollm.testing.echo.types import EchoEvent
-from aiollm.types.requests import GenerationRequest
+from aiollm.testing.echo import PROVIDER, EchoGenerationAdapter
+from aiollm.testing.echo.generation import to_server_call, to_stop
+from aiollm.testing.echo.types import EchoEvent, ServerToolItem
+from aiollm.types.requests import GenerationRequest, ProviderTool
 from aiollm.types.responses import CompletedEvent, OtherEvent
 
 EVENTS: TypeAdapter[EchoEvent] = TypeAdapter(EchoEvent)
@@ -66,6 +66,7 @@ async def test_a_stream_must_start() -> None:
         ("tool_calls", None),
         ("max_tokens", IncompleteReason.MAX_TOKENS),
         ("refusal", IncompleteReason.REFUSAL),
+        ("paused", IncompleteReason.PAUSED),
         ("content_filter", IncompleteReason.OTHER),
     ],
 )
@@ -74,3 +75,23 @@ def test_stops(stop: str, reason: IncompleteReason | None) -> None:
 
     assert result.incomplete_reason is reason
     assert result.refusal == ("no" if stop == "refusal" else None)
+
+
+def test_a_provider_tool_of_echo_goes_as_its_definition() -> None:
+    tool = ProviderTool(
+        provider=PROVIDER, definition={"type": "sandbox", "memory": "1g"}
+    )
+    request = GenerationRequest(model="echo-1", input="Hi", tools=tool)
+
+    method = EchoGenerationAdapter().to_method(request)
+
+    assert method.tools == [{"type": "sandbox", "memory": "1g"}]
+
+
+def test_a_kind_or_status_echo_made_up_stays_readable() -> None:
+    call = to_server_call(
+        ServerToolItem(id="t1", kind="teleport", status="exploded")
+    )
+
+    assert call.kind is ServerToolKind.OTHER
+    assert call.status is ServerToolStatus.FAILED
