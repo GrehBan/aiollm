@@ -13,7 +13,11 @@ from aiollm.types.requests.generation import (
     Turn,
 )
 from aiollm.types.responses.base import BaseResponse
-from aiollm.types.responses.builtin import Citation, ServerToolCall
+from aiollm.types.responses.builtin import (
+    Citation,
+    ProducedFile,
+    ServerToolCall,
+)
 
 
 class TokenUsage(BaseAPIType):
@@ -78,6 +82,9 @@ class GenerationResponse[RawT](BaseResponse):
             result from you, and ``tool_calls`` has none of them.
         citations: The sources the text rests on, from a search or a
             file search; empty without any.
+        files: The files the built-in tools made, such as the output of
+            code, in order; empty without any. Download one with
+            ``client.files.download(file)``.
         native: The response's output as its provider's next request
             takes it; ``to_turn()`` puts it in the next turn.
         raw: The provider's response.
@@ -98,6 +105,7 @@ class GenerationResponse[RawT](BaseResponse):
         default_factory=list[ServerToolCall]
     )
     citations: list[Citation] = Field(default_factory=list[Citation])
+    files: list[ProducedFile] = Field(default_factory=list[ProducedFile])
     native: NativeOutput | None = None
 
     raw: RawT

@@ -50,6 +50,7 @@ async def files_before(
 - **A file belongs to its provider.** A `ProviderFile` names its provider; one of another provider raises `RequestValidationError` before anything is sent, from `client.files` and from `client.generation` alike.
 - **Every page, one at a time.** `list()` is an async iterator over all stored files, newest first; the next page is asked for when the last file of a page has been taken.
 - **OpenAI's `purpose`.** An upload to OpenAI is a `user_data` file, the purpose of a model's input; `provider_options={"purpose": ...}` sets another. Anthropic's uploads take no options.
+- **Files the tools made.** The files code wrote in the provider's sandbox come back in `response.files` as `ProducedFile`s, and `download` takes them too, from the code interpreter's container at OpenAI; see [Built-in tools](builtin-tools.md#files).
 - **What is not shared** stays with the provider's methods below: listing by OpenAI's `purpose` or Anthropic's `ids`, and the providers' other fields. [Unification](../unification.md#stored-files) lists what each shared field becomes.
 
 ## OpenAI

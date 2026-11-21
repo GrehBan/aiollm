@@ -105,20 +105,28 @@ Two rules decide what is shared:
 
 ## Built-in tools
 
-Tools the provider runs itself; see [Built-in tools](guide/builtin-tools.md). They go in `GenerationRequest.tools` beside the functions, and their calls and sources come back in their own fields. The provider columns say what the providers' 0.16 releases do: `aiollm-openai` and `aiollm-anthropic` 0.15 send no built-in tool and leave these fields empty.
+Tools the provider runs itself; see [Built-in tools](guide/builtin-tools.md). They go in `GenerationRequest.tools` beside the functions, and their calls and sources come back in their own fields. The provider columns say what the providers' 0.17 releases do: `aiollm-openai` and `aiollm-anthropic` 0.15 send no built-in tool and leave these fields empty, and 0.16 has neither `CodeExecution.files` nor `files`.
 
 | Shared type | OpenAI | Anthropic | Lost, or when it raises |
 | --- | --- | --- | --- |
 | `WebSearch` | A `web_search` tool: `allowed_domains` in `filters.allowed_domains`, `user_location` as `{"type": "approximate", ...}` | A `web_search_20250305` tool named `web_search`: `allowed_domains`, `user_location` as `{"type": "approximate", ...}` | Only what both take. `search_context_size` and `external_web_access` (OpenAI), `blocked_domains`, `max_uses` and the newer versions (Anthropic) go through a `ProviderTool`. |
-| `CodeExecution` | A `code_interpreter` tool with an automatic container (`container: {"type": "auto"}`) | A `code_execution_20250825` tool named `code_execution` | No shared options: the container, its memory, its network and the files in it are each provider's own, through a `ProviderTool`. |
+| `CodeExecution` | A `code_interpreter` tool with an automatic container (`container: {"type": "auto"}`); its `files` as the container's `file_ids` | A `code_execution_20250825` tool named `code_execution`; its `files` as `container_upload` blocks at the end of the last `user` message | `files` takes the provider's stored files only: another provider's file, or a file of a container (`ProducedFile.container_id`), raises `RequestValidationError` (`field` `tools`). The container itself, its memory and its network are each provider's own, through a `ProviderTool`. |
 | `ProviderTool` | `definition` as one item of `tools`, checked by the method's `tools` field | `definition` as one item of `tools`, checked by the method's `tools` field | Another provider's tool raises `RequestValidationError` (`field` `tools`), as does a shared tool the provider does not run. |
 
 | Shared field | OpenAI | Anthropic | Lost, or when it raises |
 | --- | --- | --- | --- |
 | `GenerationResponse.server_tool_calls` | A `ServerToolCall` per `web_search_call`, `file_search_call`, `code_interpreter_call`, `image_generation_call` and `mcp_call` item, in output order: `kind` from the item, `status` from its `status` (`failed` is `FAILED`), `queries` from the search's `action`, `code` from the interpreter's | A `ServerToolCall` per `server_tool_use` block with the result block that answers it (`web_search_tool_result`, `web_fetch_tool_result`, `bash_code_execution_tool_result`, ...), `kind` from the block's `name`; a result with an error code is `FAILED` with it as `error` | The result stays in `ServerToolCall.raw`, the provider's items of the call. A failed tool is a call with `FAILED`, never an exception. Empty without built-in tools. |
 | `GenerationResponse.citations` | A `Citation` per annotation of the output text: `url_citation` is `URL`, `file_citation` is `FILE`, `container_file_citation` is `CONTAINER_FILE` | A `Citation` per citation of a `text` block: `web_search_result_location` is `URL`, a document location `FILE` | The provider's own fields (Anthropic's `encrypted_index`) stay in `raw` and `native`. Empty without citations. |
+| `GenerationResponse.files` | A `ProducedFile` per `container_file_citation` annotation of the output text, once per file: `id` from `file_id`, `filename`, `container_id` | A `ProducedFile` per `bash_code_execution_output` (and `code_execution_output`) block of a code execution's result: `id` from `file_id`, `source_call_id` from the result's `tool_use_id`; no `filename`, no `container_id` | OpenAI names only the files the text refers to, and not the call that made them. Empty without files. |
 | `CompletedEvent.server_tool_calls` | As `GenerationResponse.server_tool_calls`, from the event's `response` | From the blocks of the stream, as `GenerationResponse.server_tool_calls` | — |
 | `CompletedEvent.citations` | As `GenerationResponse.citations`, from the event's `response` | From the `citations_delta`s of the stream | — |
+| `CompletedEvent.files` | As `GenerationResponse.files`, from the event's `response` | From the result blocks of the stream, as `GenerationResponse.files` | — |
+| `ProducedFile.provider` | `Provider("openai")` | `Provider("anthropic")` | — |
+| `ProducedFile.id` | `file_id` of the annotation, an id in the container | `file_id`, an id of the stored files | — |
+| `ProducedFile.filename` | `filename` of the annotation | `None` | Anthropic's name is in the file's metadata: `client.files.retrieve(file)`. |
+| `ProducedFile.container_id` | `container_id` of the annotation | `None`: the file is with the stored files | Set, only `client.files.download` takes the file: `retrieve`, `delete`, a part's `file` and `CodeExecution.files` raise `RequestValidationError`. Anthropic's `download` raises it for a file with a `container_id`. |
+| `ProducedFile.source_call_id` | `None` | `tool_use_id` of the result block | — |
+| `client.files.download(ProducedFile)` | `GET /containers/{container_id}/files/{file_id}/content` (`DownloadContainerFile`) | `GET /v1/files/{file_id}/content`, as a stored file | The container expires with its files; the library keeps none. |
 
 `IncompleteReason.PAUSED` is Anthropic's `stop_reason: "pause_turn"`: the provider paused a long turn of built-in tools, and the turn is to be sent back to go on. OpenAI has no such stop. With built-in calls, or paused, `to_turn()` gives an `assistant` turn with `native`, which the provider's adapter sends in place of the turn's text, and a conversation may end with such a turn (see [Continuing a conversation](guide/builtin-tools.md#continuing-a-conversation)).
 
@@ -203,6 +211,11 @@ Every case below is raised before the request is sent (requests) or before the s
 | `part-with-two-sources` | any | `input` | `ValidationError` |
 | `part-with-another-providers-file` | any | `input` | `RequestValidationError` |
 | `files-call-with-another-providers-file` | any | `file` | `RequestValidationError` |
+| `part-with-a-file-of-a-container` | any | `input` | `RequestValidationError` |
+| `files-call-with-a-file-of-a-container` | any | `file` | `RequestValidationError` |
+| `code-execution-with-another-providers-file` | any | `tools` | `RequestValidationError` |
+| `code-execution-with-a-file-of-a-container` | any | `tools` | `RequestValidationError` |
+| `anthropic-download-of-a-file-of-a-container` | Anthropic | `file` | `RequestValidationError` |
 | `openai-expiry-out-of-range` | OpenAI | `expires_in_seconds` | `RequestValidationError` |
 | `anthropic-expiry-out-of-range` | Anthropic | `expires_in_seconds` | `RequestValidationError` |
 

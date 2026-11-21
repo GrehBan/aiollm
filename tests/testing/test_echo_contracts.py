@@ -155,6 +155,16 @@ ECHO_GENERATION = GenerationCase(
         searched=echo.SEARCHED,
         searched_stream=echo.SEARCHED_STREAM,
         failed=echo.FAILED,
+        coded=echo.CODED,
+        coded_stream=echo.CODED_STREAM,
+        produced={
+            "filename": "chart.png",
+            "container_id": "cntr_1",
+            "source_call_id": "code_1",
+        },
+        code_files={
+            "tools": [{"type": "code_execution", "file_ids": ["file_code_1"]}]
+        },
         paused=echo.PAUSED,
         continued=[{"role": "assistant", "output": echo.PAUSED_ITEMS}],
     ),
@@ -190,6 +200,10 @@ class NeverPauses(GenerationContract):
             searched={},
             searched_stream=[],
             failed={},
+            coded={},
+            coded_stream=[],
+            produced={},
+            code_files={},
         ),
     )
 
@@ -242,6 +256,7 @@ ECHO_FILES = FilesCase(
         {"type": "document", "file_id": "file_1"},
         {"type": "image", "file_id": "file_1"},
     ],
+    container_download="/v1/containers/cntr_1/files/cfile_1/content",
 )
 
 

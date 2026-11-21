@@ -1,4 +1,4 @@
-"""Methods of the echo API: generation and files."""
+"""Methods of the echo API: generation, files and container files."""
 
 from __future__ import annotations
 
@@ -189,6 +189,28 @@ class DeleteFile(BaseAPIMethod[EchoDeleted]):
 
     __request_path__ = "/files/{file_id}"
     __request_method__ = "DELETE"
+    __retryable__ = True
+
+
+class DownloadContainerFile(BaseStreamMethod[bytes]):
+    """Stream the content of a file in a code container.
+
+    Attributes:
+        container_id: The container's id.
+        file_id: The file's id in it.
+
+    Example:
+        >>> method = DownloadContainerFile(container_id="c1", file_id="f1")
+        >>> async with client.stream(method) as content:
+        ...     await content.save(path)
+    """
+
+    container_id: str
+    file_id: str
+
+    __request_path__ = "/containers/{container_id}/files/{file_id}/content"
+    __request_method__ = "GET"
+    __response_format__ = ResponseFormat.BYTES
     __retryable__ = True
 
 

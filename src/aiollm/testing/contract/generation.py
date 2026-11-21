@@ -63,6 +63,7 @@ from aiollm.types.requests import (
     ImagePart,
     JSONSchema,
     NativeOutput,
+    ProviderFile,
     ProviderTool,
     TextPart,
     Tool,
@@ -75,6 +76,7 @@ from aiollm.types.requests import (
 )
 from aiollm.types.responses import (
     CompletedEvent,
+    ProducedFile,
     ServerToolCallEvent,
     TextDeltaEvent,
     TokenUsage,
@@ -161,6 +163,18 @@ CITATIONS: Final = [
 ]
 """The citations of the text the search leads to: kind, url, title."""
 
+CODE_ID: Final = "code_1"
+"""The id of the code execution call the model makes in the scenarios."""
+
+PRODUCED_ID: Final = "file_made_1"
+"""The id of the file that code execution makes."""
+
+PRODUCED_NAME: Final = "chart.png"
+"""The name of that file."""
+
+CODE_FILE_ID: Final = "file_code_1"
+"""The id of the stored file the scenarios put into the sandbox."""
+
 
 @dataclass(frozen=True)
 class BuiltinCase:
@@ -180,6 +194,17 @@ class BuiltinCase:
             ``GenerationCase.text`` and the ``CITATIONS``.
         searched_stream: A finished stream of the same.
         failed: A finished response whose web search failed.
+        coded: A finished response of one code execution, call
+            ``CODE_ID``, that made file ``PRODUCED_ID`` (named
+            ``PRODUCED_NAME``, if the provider names it), with text.
+        coded_stream: A finished stream of the same.
+        produced: The fields of that ``ProducedFile`` the provider
+            fills besides ``provider`` and ``id``: the ``filename``, the
+            ``container_id``, the ``source_call_id`` (``CODE_ID``), as
+            far as it tells them.
+        code_files: What ``CodeExecution(files=[...])`` of stored file
+            ``CODE_FILE_ID`` becomes in the body of ``REQUEST``: the keys
+            it sets.
         paused: A response that paused its turn in the middle of a
             search, without text; its ``native`` output goes back. Left
             out by a provider whose API never pauses a turn, which
@@ -194,6 +219,10 @@ class BuiltinCase:
     searched: dict[str, Any]
     searched_stream: list[dict[str, Any]]
     failed: dict[str, Any]
+    coded: dict[str, Any]
+    coded_stream: list[dict[str, Any]]
+    produced: dict[str, Any]
+    code_files: dict[str, Any]
     paused: dict[str, Any] | None = None
     continued: list[Any] | None = None
 
@@ -1684,3 +1713,86 @@ class GenerationContract:
         assert turn.native.provider == case.provider
         body = json.loads(recorder.last.body)
         assert body[case.input_field][1:] == builtin.continued
+
+    @pytest.mark.parametrize("mode", ["create", "stream"])
+    async def test_files_a_tool_made_come_back_alike(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+        mode: str,
+    ) -> None:
+        """The files a built-in tool made come back alike."""
+        recorder.reply(
+            Reply(json=builtin.coded)
+            if mode == "create"
+            else events(builtin.coded_stream)
+        )
+        request = with_tools([CodeExecution()])
+
+        async with client:
+            if mode == "create":
+                result: Any = await client.generation.create(request)
+            else:
+                async with client.generation.stream(request) as stream:
+                    result = await stream.final()
+
+        assert result.files == [
+            ProducedFile(
+                provider=self.case.provider, id=PRODUCED_ID, **builtin.produced
+            )
+        ]
+        assert [(call.id, call.kind) for call in result.server_tool_calls] == [
+            (CODE_ID, ServerToolKind.CODE_EXECUTION)
+        ]
+        assert result.text
+
+    async def test_files_for_the_code_reach_the_wire(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+    ) -> None:
+        """The files a code execution reads reach the wire."""
+        case = self.case
+        recorder.reply(Reply(json=case.response))
+        stored = ProviderFile(provider=case.provider, id=CODE_FILE_ID)
+        request = with_tools([CodeExecution(files=[stored])])
+
+        async with client:
+            await client.generation.create(request)
+
+        body = json.loads(recorder.last.body)
+        assert {key: body[key] for key in builtin.code_files} == (
+            builtin.code_files
+        )
+
+    @pytest.mark.parametrize("kind", ["foreign", "container"])
+    async def test_code_execution_refuses_a_file_it_cannot_read(
+        self,
+        client: Any,
+        recorder: Recorder,
+        builtin: BuiltinCase,
+        kind: str,
+    ) -> None:
+        """Code execution refuses another provider's or a container's file."""
+        case = self.case
+        file = (
+            ProviderFile(provider=Provider("someone-else"), id=CODE_FILE_ID)
+            if kind == "foreign"
+            else ProducedFile(
+                provider=case.provider, id=PRODUCED_ID, container_id="cntr_1"
+            )
+        )
+        request = with_tools([CodeExecution(files=[file])])
+
+        async with client:
+            with pytest.raises(RequestValidationError) as caught:
+                await client.generation.create(request)
+
+        assert builtin
+        assert (caught.value.provider, caught.value.field) == (
+            case.provider,
+            "tools",
+        )
+        assert not recorder.requests

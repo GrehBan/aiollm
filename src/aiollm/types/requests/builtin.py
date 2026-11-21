@@ -8,6 +8,7 @@ from pydantic import MISSING, ConfigDict, Field
 
 from aiollm.enums import Provider
 from aiollm.types.base import BaseAPIType
+from aiollm.types.requests.content import ProviderFile
 from aiollm.types.requests.schema import JSONValue
 
 
@@ -69,25 +70,33 @@ class WebSearch(BaseAPIType):
 class CodeExecution(BaseAPIType):
     """Let the model run code in the provider's sandbox.
 
-    A built-in tool both providers have. It has no shared options: the
-    container, its memory and network are each provider's own, set
-    through a ``ProviderTool``. Immutable, and unknown fields are
-    rejected.
+    A built-in tool both providers have. Its one shared option is the
+    files the code reads; the container itself (an id to reuse, its
+    memory and network) is each provider's own, set through a
+    ``ProviderTool``. Immutable, and unknown fields are rejected.
 
     Attributes:
         type: Always ``"code_execution"``.
+        files: Stored files (``client.files.upload``) to put into the
+            sandbox for the code to read, at least one; each provider
+            takes only its own. A file of a container
+            (``ProducedFile.container_id``) cannot be put there.
 
     Example:
+        >>> stored = await client.files.upload(Path("sales.csv"))
         >>> GenerationRequest(
         ...     model="gpt-5",
-        ...     input="What is the 50th Fibonacci number?",
-        ...     tools=CodeExecution(),
+        ...     input="Chart the sales by month.",
+        ...     tools=CodeExecution(files=[stored.ref]),
         ... )
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["code_execution"] = "code_execution"
+    files: Annotated[list[ProviderFile], Field(min_length=1)] | MISSING = (
+        MISSING
+    )
 
 
 class ProviderTool(BaseAPIType):

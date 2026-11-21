@@ -15,6 +15,7 @@
     "check_conversation",
     "check_files",
     "checked_options",
+    "container_of",
     "merge_options",
     "request_errors"
   ],
@@ -127,6 +128,7 @@
   ],
   "aiollm.types.responses.builtin": [
     "Citation",
+    "ProducedFile",
     "ServerToolCall"
   ],
   "aiollm.types.responses.events": [

@@ -154,6 +154,7 @@ BUILTIN_TOOLS: Final = "builtin_tools.py"
 BUILTIN_TOOLS_PROVIDER: Final = "builtin_tools_provider.py"
 BUILTIN_TOOLS_STREAM: Final = "builtin_tools_stream.py"
 BUILTIN_TOOLS_CONTINUE: Final = "builtin_tools_continue.py"
+BUILTIN_TOOLS_FILES: Final = "builtin_tools_files.py"
 
 TESTED: Final = (
     QUICK_START,
@@ -191,6 +192,7 @@ TESTED: Final = (
     BUILTIN_TOOLS_PROVIDER,
     BUILTIN_TOOLS_STREAM,
     BUILTIN_TOOLS_CONTINUE,
+    BUILTIN_TOOLS_FILES,
 )
 """The title of every example a test below runs."""
 
@@ -1471,3 +1473,35 @@ async def test_builtin_tools_continue(
     ]
     assert len(recorder.requests) == 2
     assert "tools" in json.loads(first.body)
+
+
+async def test_builtin_tools_files(
+    examples: Examples, recorder: Recorder, echo: EchoClient, tmp_path: Path
+) -> None:
+    table = tmp_path / "sales.csv"
+    table.write_bytes(b"month,sales\n")
+    stored = {
+        "id": "file_1",
+        "filename": "sales.csv",
+        "bytes": 12,
+        "created_at": 1_800_000_000,
+    }
+    recorder.reply(
+        Reply(json=stored),
+        Reply(json=echo_payloads.CODED),
+        Reply(chunks=[b"\x89PNG"], content_type="image/png"),
+    )
+    await examples.run(BUILTIN_TOOLS_FILES)
+
+    async with echo:
+        await examples.chart(echo, table, tmp_path)
+
+    assert (tmp_path / "chart.png").read_bytes() == b"\x89PNG"
+    _, ask, download = recorder.requests
+    assert json.loads(ask.body)["tools"] == [
+        {"type": "code_execution", "file_ids": ["file_1"]}
+    ]
+    assert download.raw_path == (
+        "/v1/containers/cntr_1/files/file_made_1/content"
+    )
+

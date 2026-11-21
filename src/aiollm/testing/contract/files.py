@@ -40,6 +40,7 @@ from aiollm.types.requests import (
     TextPart,
     Turn,
 )
+from aiollm.types.responses import ProducedFile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -54,6 +55,12 @@ PDF: Final = b"%PDF-1.4\n%%EOF\n"
 
 FOREIGN: Final = ProviderFile(provider=Provider("another"), id="file-1")
 """A file of a provider no client is of."""
+
+CONTAINER_ID: Final = "cntr_1"
+"""The container of the file of a container in the scenarios."""
+
+CONTAINER_FILE_ID: Final = "cfile_1"
+"""The id of that file in its container."""
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,10 @@ class FilesCase:
         input_field: The body field of the conversation.
         stored_parts: What a document and an image of ``file`` become
             in a user turn.
+        container_download: The path that downloads file
+            ``CONTAINER_FILE_ID`` of container ``CONTAINER_ID``; ``None``
+            for a provider that keeps no files in containers, which
+            refuses the download before sending.
     """
 
     provider: Provider
@@ -107,6 +118,7 @@ class FilesCase:
     message: dict[str, Any]
     input_field: str
     stored_parts: list[dict[str, Any]]
+    container_download: str | None
 
 
 class FilesContract:
@@ -144,6 +156,19 @@ class FilesContract:
         """
         return ProviderFile(
             provider=self.case.provider, id=self.case.file["id"]
+        )
+
+    def container_file(self) -> ProducedFile:
+        """Refer to a file of a container of the case's provider.
+
+        Returns:
+            File ``CONTAINER_FILE_ID`` of container ``CONTAINER_ID``.
+        """
+        return ProducedFile(
+            provider=self.case.provider,
+            id=CONTAINER_FILE_ID,
+            filename="chart.png",
+            container_id=CONTAINER_ID,
         )
 
     async def test_an_upload_returns_the_shared_metadata(
@@ -415,6 +440,62 @@ class FilesContract:
         """Another providers file in a part is refused."""
         case = self.case
         turn = Turn.user([DocumentPart(file=FOREIGN)])
+
+        async with client:
+            with pytest.raises(RequestValidationError) as caught:
+                await client.generation.create(model="m", input=[turn])
+
+        assert (caught.value.provider, caught.value.field) == (
+            case.provider,
+            "input",
+        )
+        assert recorder.requests == []
+
+    async def test_a_file_of_a_container_is_downloaded_from_it(
+        self, client: Any, recorder: Recorder, tmp_path: Path
+    ) -> None:
+        """A file of a container is downloaded from its container."""
+        case = self.case
+        target = tmp_path / "chart.png"
+        if case.container_download is None:  # pragma: no cover
+            async with client:
+                with pytest.raises(RequestValidationError) as caught:
+                    client.files.download(self.container_file())
+            assert caught.value.field == "file"
+            assert recorder.requests == []
+            return
+        recorder.reply(Reply(chunks=[PDF], content_type="image/png"))
+
+        file = self.container_file()
+        async with client, client.files.download(file) as content:
+            written = await content.save(target)
+
+        assert (written, target.read_bytes()) == (len(PDF), PDF)
+        assert recorder.last.raw_path == case.container_download
+
+    @pytest.mark.parametrize("call", ["retrieve", "delete"])
+    async def test_a_file_of_a_container_is_only_downloaded(
+        self, client: Any, recorder: Recorder, call: str
+    ) -> None:
+        """A file of a container is refused by all but the download."""
+        case = self.case
+
+        async with client:
+            with pytest.raises(RequestValidationError) as caught:
+                await getattr(client.files, call)(self.container_file())
+
+        assert (caught.value.provider, caught.value.field) == (
+            case.provider,
+            "file",
+        )
+        assert recorder.requests == []
+
+    async def test_a_file_of_a_container_in_a_part_is_refused(
+        self, client: Any, recorder: Recorder
+    ) -> None:
+        """A file of a container in a part is refused."""
+        case = self.case
+        turn = Turn.user([DocumentPart(file=self.container_file())])
 
         async with client:
             with pytest.raises(RequestValidationError) as caught:

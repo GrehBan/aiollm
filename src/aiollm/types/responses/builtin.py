@@ -1,4 +1,4 @@
-"""Built-in tool calls and citations of a generation."""
+"""Built-in tool calls, citations and produced files of a generation."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from pydantic import Field
 
 from aiollm.enums import CitationKind, ServerToolKind, ServerToolStatus
 from aiollm.types.base import BaseAPIType
+from aiollm.types.requests.content import ProviderFile
 from aiollm.types.requests.schema import JSONValue
 
 
@@ -81,3 +82,34 @@ class Citation(BaseAPIType):
     cited_text: str | None = None
     start_index: int | None = None
     end_index: int | None = None
+
+
+class ProducedFile(ProviderFile):
+    """A file a built-in tool made, such as a chart the code drew.
+
+    A ``ProviderFile``, so ``client.files.download(file)`` streams its
+    content. Where it lives depends on the provider: Anthropic keeps it
+    with the files you store (``container_id`` is ``None``), and it
+    goes wherever a ``ProviderFile`` does; OpenAI keeps it in the code
+    interpreter's container (``container_id`` is set), which only
+    ``download`` reaches: ``retrieve``, ``delete``, a part's ``file``
+    and ``CodeExecution.files`` refuse it with
+    ``RequestValidationError``. A container and its files expire with
+    the container, so download what you need soon.
+
+    Attributes:
+        filename: The file's name, if the provider tells it.
+        container_id: The container that holds the file; ``None`` for
+            a file kept with the stored files.
+        source_call_id: The ``ServerToolCall`` that made it, if the
+            provider tells it.
+
+    Example:
+        >>> for file in response.files:
+        ...     async with client.files.download(file) as content:
+        ...         await content.save(Path(file.filename or file.id))
+    """
+
+    filename: str | None = None
+    container_id: str | None = None
+    source_call_id: str | None = None

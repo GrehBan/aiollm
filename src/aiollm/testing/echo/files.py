@@ -12,12 +12,14 @@ from pydantic import MISSING
 from aiollm.adapters.base import BaseFilesAdapter
 from aiollm.adapters.validation import (
     checked_options,
+    container_of,
     merge_options,
     request_errors,
 )
 from aiollm.testing.echo.api import PROVIDER
 from aiollm.testing.echo.methods import (
     DeleteFile,
+    DownloadContainerFile,
     DownloadFile,
     ListFiles,
     RetrieveFile,
@@ -150,16 +152,23 @@ class EchoFilesAdapter(BaseFilesAdapter[EchoFile, EchoFilePage]):
         """
         return DeleteFile(file_id=file_id)
 
-    def to_download_method(self, file_id: str) -> DownloadFile:
+    def to_download_method(
+        self, file: ProviderFile
+    ) -> DownloadFile | DownloadContainerFile:
         """Build the method that streams a file's content.
 
         Args:
-            file_id: The file's id.
+            file: The file.
 
         Returns:
+            ``DownloadContainerFile`` for a file of a container, else
             ``DownloadFile``.
         """
-        return DownloadFile(file_id=file_id)
+        if (container := container_of(file)) is not None:
+            return DownloadContainerFile(
+                container_id=container, file_id=file.id
+            )
+        return DownloadFile(file_id=file.id)
 
     def to_stored_file(self, raw: EchoFile) -> StoredFile[EchoFile]:
         """Convert the echo file into the shared metadata.
