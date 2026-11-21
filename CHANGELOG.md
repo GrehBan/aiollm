@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.16.0] - 2026-11-21
+
+### Added
+
+- Built-in tools, the ones a provider runs itself, in the shared request and
+  response: `WebSearch` and `CodeExecution` (with `UserLocation`), the two both
+  providers have, and `ProviderTool` for a provider's own, all in the `tools=`
+  list beside the functions (`request.tools` keeps the functions,
+  `request.builtin_tools` has the rest). A response has `server_tool_calls`
+  (`ServerToolCall`: `kind`, `status`, `queries`, `code`, `error`, the
+  provider's items in `raw`; a failed tool is a call with `FAILED`, not an
+  exception) and `citations` (`Citation`), a stream has `ServerToolCallEvent`
+  for the start and the end of a call, and `CompletedEvent` carries the same
+  two fields. `IncompleteReason.PAUSED` is a turn the provider paused. A
+  provider takes them from its own release: the 0.15 provider packages send no
+  built-in tool yet. For providers and tests: `check_builtin_tools` in
+  `aiollm.adapters`, `BuiltinCase` for the shared scenarios (a `GenerationCase`
+  without one skips them) and a web search and a code execution in the echo
+  provider, with the new names in the extension API.
+
+### Changed
+
+- An `assistant` `Turn` can carry `native`, and `to_turn()` of a response that
+  called built-in tools, or paused (`IncompleteReason.PAUSED`), returns one:
+  the provider needs its own record of the turn, such as Anthropic's encrypted
+  search results, to go on with it. A paused response without text has a turn
+  too, and a conversation may now end with an `assistant` turn that has
+  `native`, to continue the pause; any other `assistant` turn still cannot end
+  it, and an ordinary text answer still gives a plain turn. A provider adapter
+  sends `Turn.native` when it is its own, as it does for a `ToolCallTurn`, and
+  one that does not ignores it, so a provider package on this core changes
+  nothing until it takes these.
+- The core and both providers are on PyPI: `pip install aiollm-openai` or
+  `pip install aiollm-anthropic` installs a provider with the core it needs,
+  and `pip install aiollm-core` the core alone. The README no longer installs
+  from source.
+
 ## [0.15.0] - 2026-11-20
 
 ### Added
@@ -1367,7 +1404,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/aiollm-org/aiollm/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/aiollm-org/aiollm/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/aiollm-org/aiollm/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/aiollm-org/aiollm/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/aiollm-org/aiollm/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/aiollm-org/aiollm/compare/v0.12.1...v0.13.0
