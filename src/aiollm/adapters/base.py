@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 from aiollm.enums import Provider
 from aiollm.methods.protocols import IAPIMethod, IStreamMethod
 from aiollm.types.requests.base import BaseRequest
+from aiollm.types.requests.content import ProviderFile
 from aiollm.types.requests.upload import FileUpload
 from aiollm.types.responses.base import BaseResponse
 from aiollm.types.responses.events import BaseResponseEvent
@@ -278,14 +279,22 @@ class BaseFilesAdapter[RawFileT, RawPageT](_ProviderAdapter):
         raise NotImplementedError
 
     @abstractmethod
-    def to_download_method(self, file_id: str) -> IStreamMethod[bytes]:
+    def to_download_method(self, file: ProviderFile) -> IStreamMethod[bytes]:
         """Build the method that streams a file's content.
 
+        The whole file, not its id: a ``ProducedFile`` of a container
+        (``container_id``) is downloaded from that container where the
+        provider has one, and refused where it has none.
+
         Args:
-            file_id: The provider's id of the file.
+            file: The file, already known to be the provider's.
 
         Returns:
             The provider's stream method, ready to open.
+
+        Raises:
+            RequestValidationError: The provider cannot download the
+                file, such as a file of a container where it has none.
         """
         raise NotImplementedError
 

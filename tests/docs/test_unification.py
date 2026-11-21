@@ -35,6 +35,7 @@ from aiollm_openai.adapters import (
 from aiollm_openai.client import session_factory
 from aiollm_openai.types import Response
 from aiollm.types.requests import (
+    CodeExecution,
     DocumentPart,
     FileUpload,
     ForcedTool,
@@ -51,6 +52,7 @@ from aiollm.types.responses import (
     CompletedEvent,
     GenerationEvent,
     GenerationResponse,
+    ProducedFile,
     StoredFile,
     TokenUsage,
 )
@@ -90,6 +92,11 @@ TURNS = [Turn.user("Hi"), Turn.assistant("Hello")]
 OPENAI_FILE = ProviderFile(provider=OPENAI_PROVIDER, id="file-abc123")
 """A file OpenAI stores."""
 
+CONTAINER_FILE = ProducedFile(
+    provider=OPENAI_PROVIDER, id="cfile_1", container_id="cntr_1"
+)
+"""A file OpenAI's code interpreter made in its container."""
+
 PARTS = (TextPart, ImagePart, DocumentPart)
 """The parts of a turn, which the input conversion converts."""
 
@@ -124,6 +131,7 @@ def documented(owner: str) -> set[str]:
         FileUpload,
         ProviderFile,
         StoredFile,
+        ProducedFile,
     ],
     ids=lambda model: model.__name__,
 )
@@ -176,6 +184,7 @@ TAKEN_AS_IS = {
     "GenerationResponse.tool_calls",
     "GenerationResponse.server_tool_calls",
     "GenerationResponse.citations",
+    "GenerationResponse.files",
     "GenerationResponse.native",
     "GenerationResponse.raw",
     "ToolCall.id",
@@ -190,6 +199,7 @@ TAKEN_AS_IS = {
     "CompletedEvent.tool_calls",
     "CompletedEvent.server_tool_calls",
     "CompletedEvent.citations",
+    "CompletedEvent.files",
     "CompletedEvent.native",
     "CompletedEvent.raw",
 }
@@ -353,6 +363,32 @@ SYNC_CASES: dict[str, Callable[[], object]] = {
     "part-with-another-providers-file": anthropic_method(
         input=[Turn.user([DocumentPart(file=OPENAI_FILE)])]
     ),
+    "part-with-a-file-of-a-container": openai_method(
+        input=[Turn.user([DocumentPart(file=CONTAINER_FILE)])]
+    ),
+    "code-execution-with-another-providers-file": lambda: (
+        AnthropicGenerationAdapter().to_method(
+            GenerationRequest(
+                model="m",
+                input="Hi",
+                tools=[CodeExecution(files=[OPENAI_FILE])],
+            )
+        )
+    ),
+    "code-execution-with-a-file-of-a-container": lambda: (
+        OpenAIGenerationAdapter().to_method(
+            GenerationRequest(
+                model="m",
+                input="Hi",
+                tools=[CodeExecution(files=[CONTAINER_FILE])],
+            )
+        )
+    ),
+    "anthropic-download-of-a-file-of-a-container": lambda: (
+        AnthropicFilesAdapter().to_download_method(
+            CONTAINER_FILE.model_copy(update={"provider": ANTHROPIC_PROVIDER})
+        )
+    ),
     "openai-expiry-out-of-range": lambda: (
         OpenAIFilesAdapter().to_upload_method(
             FileUpload(file=BytesFile(b"%PDF"), expires_in_seconds=60)
@@ -402,6 +438,12 @@ async def image_of_unknown_format(_: Recorder) -> None:
     await ImagePart.load(DOCUMENT)
 
 
+async def file_of_a_container(_: Recorder) -> None:
+    """Retrieve the metadata of a file of a container."""
+    async with OpenAIClient(TEST_TOKEN) as client:
+        await client.files.retrieve(CONTAINER_FILE)
+
+
 async def another_providers_file(_: Recorder) -> None:
     """Delete an OpenAI file through Anthropic's client."""
     async with AnthropicClient(TEST_TOKEN) as client:
@@ -410,6 +452,7 @@ async def another_providers_file(_: Recorder) -> None:
 
 ASYNC_CASES: dict[str, Callable[[Recorder], Awaitable[None]]] = {
     "files-call-with-another-providers-file": another_providers_file,
+    "files-call-with-a-file-of-a-container": file_of_a_container,
     "image-of-unknown-format": image_of_unknown_format,
     "openai-failed-response": failed_response,
     "stream-without-completion": stream_without_completion,

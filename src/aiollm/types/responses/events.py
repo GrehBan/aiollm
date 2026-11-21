@@ -20,7 +20,11 @@ from aiollm.types.requests.generation import (
     ToolCallTurn,
     Turn,
 )
-from aiollm.types.responses.builtin import Citation, ServerToolCall
+from aiollm.types.responses.builtin import (
+    Citation,
+    ProducedFile,
+    ServerToolCall,
+)
 from aiollm.types.responses.generation import TokenUsage, continuation
 
 
@@ -195,6 +199,8 @@ class CompletedEvent[RawT](RawResponseEvent[RawT]):
             ``GenerationResponse``.
         citations: The sources the text rests on, as on
             ``GenerationResponse``.
+        files: The files the built-in tools made, as on
+            ``GenerationResponse``.
         native: The stream's output as its provider's next request takes
             it, as ``GenerationResponse.native``.
     """
@@ -216,6 +222,7 @@ class CompletedEvent[RawT](RawResponseEvent[RawT]):
         default_factory=list[ServerToolCall]
     )
     citations: list[Citation] = Field(default_factory=list[Citation])
+    files: list[ProducedFile] = Field(default_factory=list[ProducedFile])
     native: NativeOutput | None = None
 
     def to_turn(self) -> Turn | ToolCallTurn:

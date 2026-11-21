@@ -8,6 +8,9 @@ from typing import Any
 from aiollm.testing.contract.generation import (
     CALLS,
     CITATIONS,
+    CODE_ID,
+    PRODUCED_ID,
+    PRODUCED_NAME,
     SEARCH_ID,
     SEARCH_QUERIES,
 )
@@ -134,3 +137,44 @@ PAUSED_ITEMS: list[dict[str, Any]] = [
 
 PAUSED: dict[str, Any] = RESPONSE | {"output": PAUSED_ITEMS, "stop": "paused"}
 """A response that paused."""
+
+CODE_ITEM: dict[str, Any] = {
+    "type": "server_tool",
+    "id": CODE_ID,
+    "kind": "code_execution",
+    "status": "completed",
+    "code": "plot(sales)",
+    "result": {"stdout": ""},
+}
+"""A finished code execution."""
+
+FILE_ITEM: dict[str, Any] = {
+    "type": "file",
+    "id": PRODUCED_ID,
+    "filename": PRODUCED_NAME,
+    "container_id": "cntr_1",
+    "call_id": CODE_ID,
+}
+"""The file that code execution made, in its container."""
+
+CODED: dict[str, Any] = RESPONSE | {
+    "output": [
+        CODE_ITEM,
+        FILE_ITEM,
+        {"type": "text", "text": "Here is the chart."},
+    ],
+}
+"""A response with a code execution, its file and text."""
+
+CODED_STREAM: list[dict[str, Any]] = [
+    STREAM[0],
+    {
+        "type": "server_tool_start",
+        "call": CODE_ITEM | {"status": "in_progress", "result": None},
+    },
+    {"type": "server_tool_done", "call": CODE_ITEM},
+    {"type": "file", "file": FILE_ITEM},
+    {"type": "text_delta", "delta": "Here is the chart."},
+    STREAM[-1],
+]
+"""A stream of the same."""

@@ -21,6 +21,7 @@ from aiollm.adapters.validation import (
     check_conversation,
     check_files,
     checked_options,
+    container_of,
     merge_options,
     request_errors,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "check_conversation",
     "check_files",
     "checked_options",
+    "container_of",
     "merge_options",
     "request_errors",
 ]

@@ -11,12 +11,14 @@ from typing_extensions import is_typeddict
 
 from aiollm.enums import Role
 from aiollm.exceptions import RequestValidationError
-from aiollm.types.requests.builtin import ProviderTool
+from aiollm.types.requests.builtin import CodeExecution, ProviderTool
 from aiollm.types.requests.content import TextPart
 from aiollm.types.requests.generation import ToolCallTurn, ToolResult, Turn
+from aiollm.types.responses.builtin import ProducedFile
 
 if TYPE_CHECKING:
     from aiollm.enums import Provider
+    from aiollm.types.requests.content import ProviderFile
     from aiollm.types.requests.generation import (
         GenerationRequest,
         InputItem,
@@ -240,19 +242,42 @@ def check_conversation(request: GenerationRequest, provider: Provider) -> None:
         raise RequestValidationError(problem, provider=provider, field="input")
 
 
+def container_of(file: ProviderFile) -> str | None:
+    """Tell which container of a built-in tool holds a file.
+
+    Such a file (a ``ProducedFile`` with a ``container_id``, as OpenAI's
+    code interpreter makes) is not among the stored files: only a
+    download reaches it.
+
+    Args:
+        file: The file.
+
+    Returns:
+        The container's id; ``None`` for a stored file.
+
+    Example:
+        >>> if (container := container_of(file)) is not None:
+        ...     return DownloadContainerFile(container, file.id)
+    """
+    return file.container_id if isinstance(file, ProducedFile) else None
+
+
 def check_files(request: GenerationRequest, provider: Provider) -> None:
     """Check that every stored file a request names is the provider's.
 
     A file id means nothing to another provider, which would answer 404
     or, worse, find a file of its own by that id; so a part whose
     ``file`` another provider stores is refused before anything is sent.
+    A file of a container is refused too, since a part names a stored
+    file.
 
     Args:
         request: The shared request.
         provider: Provider the request is for.
 
     Raises:
-        RequestValidationError: A part names another provider's file.
+        RequestValidationError: A part names another provider's file, or
+            a file of a container.
     """
     if isinstance(request.input, str):
         return
@@ -263,12 +288,18 @@ def check_files(request: GenerationRequest, provider: Provider) -> None:
             if isinstance(part, TextPart) or part.file is MISSING:
                 continue
             file = part.file
-            if file.provider == provider:
+            if file.provider != provider:
+                message = (
+                    f"item {index} names a file stored by "
+                    f"{file.provider.value}, not by {provider.value}"
+                )
+            elif container_of(file) is not None:
+                message = (
+                    f"item {index} names file {file.id} of a container, "
+                    "which only a download reaches"
+                )
+            else:
                 continue
-            message = (
-                f"item {index} names a file stored by "
-                f"{file.provider.value}, not by {provider.value}"
-            )
             raise RequestValidationError(
                 message, provider=provider, field="input"
             )
@@ -293,11 +324,14 @@ def check_builtin_tools(
             takes, such as ``(WebSearch, CodeExecution)``.
 
     Raises:
-        RequestValidationError: A shared tool is not in ``shared``, or a
-            ``ProviderTool`` belongs to another provider; ``field`` is
-            ``tools``.
+        RequestValidationError: A shared tool is not in ``shared``, a
+            ``ProviderTool`` belongs to another provider, or the files
+            of a ``CodeExecution`` are another provider's or of a
+            container; ``field`` is ``tools``.
     """
     for tool in request.builtin_tools:
+        if isinstance(tool, CodeExecution) and tool.files is not MISSING:
+            _check_code_files(tool.files, provider)
         if isinstance(tool, ProviderTool):
             if tool.provider != provider:
                 message = (
@@ -312,6 +346,35 @@ def check_builtin_tools(
             raise RequestValidationError(
                 message, provider=provider, field="tools"
             )
+
+
+def _check_code_files(
+    files: Sequence[ProviderFile], provider: Provider
+) -> None:
+    """Check the files a ``CodeExecution`` puts into the sandbox.
+
+    Args:
+        files: The files.
+        provider: Provider the request is for.
+
+    Raises:
+        RequestValidationError: A file is another provider's, or of a
+            container; ``field`` is ``tools``.
+    """
+    for file in files:
+        if file.provider != provider:
+            message = (
+                f"code execution names a file stored by "
+                f"{file.provider.value}, not by {provider.value}"
+            )
+        elif container_of(file) is not None:
+            message = (
+                f"code execution names file {file.id} of a container, "
+                "which only a download reaches"
+            )
+        else:
+            continue
+        raise RequestValidationError(message, provider=provider, field="tools")
 
 
 def _order_problem(items: Sequence[InputItem]) -> str | None:

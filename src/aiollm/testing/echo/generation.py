@@ -39,6 +39,8 @@ from aiollm.testing.echo.types import (
     EchoGenerationOptions,
     EchoResponse,
     EchoUsage,
+    FileEvent,
+    FileItem,
     RefusalItem,
     ServerToolDoneEvent,
     ServerToolItem,
@@ -81,7 +83,11 @@ from aiollm.types.requests.generation import (
     ToolResult,
     Turn,
 )
-from aiollm.types.responses.builtin import Citation, ServerToolCall
+from aiollm.types.responses.builtin import (
+    Citation,
+    ProducedFile,
+    ServerToolCall,
+)
 from aiollm.types.responses.events import (
     CompletedEvent,
     GenerationEvent,
@@ -297,6 +303,24 @@ def to_citation(item: CitationItem) -> Citation:
     )
 
 
+def to_file(item: FileItem) -> ProducedFile:
+    """Convert a file a built-in tool made.
+
+    Args:
+        item: The echo item.
+
+    Returns:
+        The shared file.
+    """
+    return ProducedFile(
+        provider=PROVIDER,
+        id=item.id,
+        filename=item.filename,
+        container_id=item.container_id,
+        source_call_id=item.call_id,
+    )
+
+
 def _tool_definition(tool: BuiltinTool) -> dict[str, Any]:
     """Convert a built-in tool of the request.
 
@@ -305,11 +329,16 @@ def _tool_definition(tool: BuiltinTool) -> dict[str, Any]:
 
     Returns:
         Its object for ``tools``: a ``ProviderTool``'s definition as it
-        is, a shared tool by its fields.
+        is, a code execution with the ids of its files as ``file_ids``,
+        another shared tool by its fields.
     """
-    if isinstance(tool, ProviderTool):
-        return dict(tool.definition)
-    return tool.model_dump(mode="json")
+    match tool:
+        case ProviderTool():
+            return dict(tool.definition)
+        case CodeExecution(files=list() as files):
+            return {"type": tool.type, "file_ids": [f.id for f in files]}
+        case _:
+            return tool.model_dump(mode="json")
 
 
 def _native(items: list[dict[str, Any]]) -> NativeOutput | None:
@@ -417,6 +446,9 @@ class EchoGenerationAdapter(
             for item in raw.output
             if isinstance(item, ServerToolItem)
         ]
+        files = [
+            to_file(item) for item in raw.output if isinstance(item, FileItem)
+        ]
         return GenerationResponse[EchoResponse](
             id=raw.id,
             provider=self.provider,
@@ -433,6 +465,7 @@ class EchoGenerationAdapter(
             ],
             server_tool_calls=server_calls,
             citations=citations,
+            files=files,
             native=_native(
                 [
                     item.model_dump(mode="json", exclude_unset=True)
@@ -469,8 +502,8 @@ class EchoGenerationAdapter(
         ``ToolCallStartEvent``, ``ToolCallDeltaEvent`` and
         ``ToolCallDoneEvent``; those of a built-in tool call
         ``ServerToolCallEvent``; ``done`` becomes ``CompletedEvent``
-        with what the stream told, the built-in calls and citations
-        among it; every other event is an ``OtherEvent``.
+        with what the stream told, the built-in calls, citations and
+        files among it; every other event is an ``OtherEvent``.
 
         Args:
             items: The events the echo API sent.
@@ -512,8 +545,8 @@ class EchoGenerationAdapter(
                 case ServerToolStartEvent() | ServerToolDoneEvent():
                     yield state.server_event(item)
                     continue
-                case CitationEvent():
-                    state.citations.append(item.citation)
+                case CitationEvent() | FileEvent():
+                    state.keep(item)
                 case DoneEvent():
                     yield state.completed(item)
                     continue
@@ -591,6 +624,7 @@ class _StreamState:
             order they started.
         server_calls: The built-in tool calls that are done.
         citations: The sources of the text.
+        files: The files the built-in tools made.
     """
 
     started: StartEvent | None = None
@@ -602,6 +636,7 @@ class _StreamState:
         default_factory=list[ServerToolItem]
     )
     citations: list[CitationItem] = field(default_factory=list[CitationItem])
+    files: list[FileItem] = field(default_factory=list[FileItem])
 
     def pieces(self, call_id: str) -> list[str]:
         """Find the argument pieces of a call.
@@ -637,6 +672,17 @@ class _StreamState:
             id=call_id, name=self.calls[call_id][0], arguments=arguments
         )
 
+    def keep(self, item: CitationEvent | FileEvent) -> None:
+        """Keep a source or a file for the end of the stream.
+
+        Args:
+            item: The echo event.
+        """
+        if isinstance(item, CitationEvent):
+            self.citations.append(item.citation)
+        else:
+            self.files.append(item.file)
+
     def server_event(
         self, item: ServerToolStartEvent | ServerToolDoneEvent
     ) -> ServerToolCallEvent[EchoEvent]:
@@ -666,7 +712,7 @@ class _StreamState:
 
         Returns:
             The completed event, its output put together as ``native``,
-            its built-in calls and citations in their own fields.
+            its built-in calls, citations and files in their own fields.
 
         Raises:
             APIResponseError: ``done`` came without ``start``.
@@ -686,6 +732,10 @@ class _StreamState:
         items += [
             citation.model_dump(mode="json", exclude_unset=True)
             for citation in self.citations
+        ]
+        items += [
+            file.model_dump(mode="json", exclude_unset=True)
+            for file in self.files
         ]
         items += [
             {
@@ -708,6 +758,7 @@ class _StreamState:
             tool_calls=calls,
             server_tool_calls=[to_server_call(c) for c in self.server_calls],
             citations=[to_citation(c) for c in self.citations],
+            files=[to_file(f) for f in self.files],
             native=_native(items),
             raw=done,
         )

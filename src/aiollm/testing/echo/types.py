@@ -104,12 +104,32 @@ class CitationItem(BaseAPITypeExtra):
     end_index: int | None = None
 
 
+class FileItem(BaseAPITypeExtra):
+    """A file a built-in tool made.
+
+    Attributes:
+        type: Always ``file``.
+        id: The file's id.
+        filename: Its name.
+        container_id: The container that holds it; ``None`` for a file
+            kept with the stored files.
+        call_id: The built-in tool call that made it.
+    """
+
+    type: Literal["file"] = "file"
+    id: str
+    filename: str | None = None
+    container_id: str | None = None
+    call_id: str | None = None
+
+
 OUTPUT_TAGS = {
     "text": "text",
     "refusal": "refusal",
     "tool_call": "tool_call",
     "server_tool": "server_tool",
     "citation": "citation",
+    "file": "file",
 }
 """Tag of each output ``type`` the echo types model."""
 
@@ -119,6 +139,7 @@ type OutputItem = Annotated[
     | Annotated[ToolCallItem, Tag("tool_call")]
     | Annotated[ServerToolItem, Tag("server_tool")]
     | Annotated[CitationItem, Tag("citation")]
+    | Annotated[FileItem, Tag("file")]
     | Annotated[BaseUnknown, Tag(UNKNOWN)],
     Discriminator(by_type(OUTPUT_TAGS)),
 ]
@@ -259,6 +280,18 @@ class CitationEvent(BaseAPITypeExtra):
     citation: CitationItem
 
 
+class FileEvent(BaseAPITypeExtra):
+    """A file a built-in tool made.
+
+    Attributes:
+        type: Always ``file``.
+        file: The file.
+    """
+
+    type: Literal["file"] = "file"
+    file: FileItem
+
+
 class DoneEvent(BaseAPITypeExtra):
     """The last event of a complete stream.
 
@@ -284,6 +317,7 @@ EVENT_TAGS = {
     "server_tool_start": "server_tool_start",
     "server_tool_done": "server_tool_done",
     "citation": "citation",
+    "file": "file",
     "done": "done",
 }
 """Tag of each event ``type`` the echo types model."""
@@ -297,6 +331,7 @@ type EchoEvent = Annotated[
     | Annotated[ServerToolStartEvent, Tag("server_tool_start")]
     | Annotated[ServerToolDoneEvent, Tag("server_tool_done")]
     | Annotated[CitationEvent, Tag("citation")]
+    | Annotated[FileEvent, Tag("file")]
     | Annotated[DoneEvent, Tag("done")]
     | Annotated[BaseUnknown, Tag(UNKNOWN)],
     Discriminator(by_type(EVENT_TAGS)),

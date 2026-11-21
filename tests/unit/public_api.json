@@ -69,6 +69,7 @@
     "OtherEvent",
     "PathFile",
     "PermissionDeniedError",
+    "ProducedFile",
     "Provider",
     "ProviderFile",
     "ProviderTool",
@@ -126,6 +127,7 @@
     "check_conversation",
     "check_files",
     "checked_options",
+    "container_of",
     "merge_options",
     "request_errors"
   ],
@@ -353,6 +355,7 @@
     "GenerationEvent",
     "GenerationResponse",
     "OtherEvent",
+    "ProducedFile",
     "RawResponseEvent",
     "ReasoningDeltaEvent",
     "ServerToolCall",

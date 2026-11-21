@@ -7,6 +7,7 @@ from aiollm.types.responses.base import (
 )
 from aiollm.types.responses.builtin import (
     Citation,
+    ProducedFile,
     ServerToolCall,
 )
 from aiollm.types.responses.events import (
@@ -40,6 +41,7 @@ __all__ = [
     "GenerationEvent",
     "GenerationResponse",
     "OtherEvent",
+    "ProducedFile",
     "RawResponseEvent",
     "ReasoningDeltaEvent",
     "ServerToolCall",

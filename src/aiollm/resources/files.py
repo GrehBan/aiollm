@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Unpack
 
 from pydantic import MISSING
 
+from aiollm.adapters.validation import container_of
 from aiollm.exceptions import RequestValidationError
 from aiollm.resources.base import BaseResource
 from aiollm.resources.protocols import IFilesAdapter
@@ -139,10 +140,12 @@ class FilesResource[
             The stored file.
 
         Raises:
-            RequestValidationError: ``file`` is another provider's.
+            RequestValidationError: ``file`` is another provider's, or a
+                file of a container (``ProducedFile.container_id``),
+                which only ``download`` reaches.
             NotFoundError: The provider has no such file.
         """
-        method = self._adapter.to_retrieve_method(self._file_id(file))
+        method = self._adapter.to_retrieve_method(self._stored_id(file))
         raw = await self.session.send_request(method, **options)
         return self._adapter.to_stored_file(raw)
 
@@ -189,10 +192,12 @@ class FilesResource[
             **options: Options of the call, passed on to the session.
 
         Raises:
-            RequestValidationError: ``file`` is another provider's.
+            RequestValidationError: ``file`` is another provider's, or a
+                file of a container, which the container's expiry
+                deletes.
             NotFoundError: The provider has no such file.
         """
-        method = self._adapter.to_delete_method(self._file_id(file))
+        method = self._adapter.to_delete_method(self._stored_id(file))
         await self.session.send_request(method, **options)
 
     def download(
@@ -205,10 +210,13 @@ class FilesResource[
 
         Each provider lets only some files be downloaded: OpenAI refuses
         a ``user_data`` file, Anthropic one it did not make itself (code
-        execution, skills); both answer ``BadRequestError``.
+        execution, skills); both answer ``BadRequestError``. A file a
+        built-in tool made (``GenerationResponse.files``) is downloaded
+        from wherever it lives, its container included.
 
         Args:
-            file: The file.
+            file: The file, such as a ``StoredFile.ref`` or a
+                ``ProducedFile``.
             **options: Options of opening the stream, passed on to the
                 session.
 
@@ -218,19 +226,42 @@ class FilesResource[
             memory) and closes it on exit.
 
         Raises:
-            RequestValidationError: ``file`` is another provider's.
+            RequestValidationError: ``file`` is another provider's, or a
+                file of a container where the provider has none.
         """
-        method = self._adapter.to_download_method(self._file_id(file))
+        self._check_provider(file)
+        method = self._adapter.to_download_method(file)
         return self.session.stream(method, **options)
 
-    def _file_id(self, file: ProviderFile) -> str:
-        """Take the id of a file of this resource's provider.
+    def _stored_id(self, file: ProviderFile) -> str:
+        """Take the id of a stored file of this resource's provider.
 
         Args:
             file: The file.
 
         Returns:
             Its id.
+
+        Raises:
+            RequestValidationError: The file is another provider's, or
+                a file of a container.
+        """
+        self._check_provider(file)
+        if container_of(file) is not None:
+            message = (
+                f"file {file.id} is in a container, which only a "
+                "download reaches"
+            )
+            raise RequestValidationError(
+                message, provider=self._adapter.provider, field="file"
+            )
+        return file.id
+
+    def _check_provider(self, file: ProviderFile) -> None:
+        """Check that a file is this resource's provider's.
+
+        Args:
+            file: The file.
 
         Raises:
             RequestValidationError: The file is another provider's.
@@ -244,4 +275,3 @@ class FilesResource[
             raise RequestValidationError(
                 message, provider=provider, field="file"
             )
-        return file.id

@@ -166,6 +166,7 @@ from aiollm.types.requests.generation import (
 )
 from aiollm.types.responses.builtin import (
     Citation,
+    ProducedFile,
     ServerToolCall,
 )
 from aiollm.types.responses.events import (
@@ -262,6 +263,7 @@ __all__ = [
     "OtherEvent",
     "PathFile",
     "PermissionDeniedError",
+    "ProducedFile",
     "Provider",
     "ProviderFile",
     "ProviderTool",

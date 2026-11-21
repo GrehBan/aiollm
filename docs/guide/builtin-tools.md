@@ -1,16 +1,16 @@
 # Built-in tools
 
-A built-in tool (OpenAI calls it hosted, Anthropic a server tool) is a tool the *provider* runs: the model searches the web or runs code, the provider executes it and puts the call and its result into the response. Unlike a function tool ([Tool calls](tools.md)), there is nothing for your code to run and no `ToolResult` to send back. The library has three jobs here: send the tool in the request, show what the provider did in the response and the stream, and keep what the provider needs to go on with the conversation.
+A built-in tool (OpenAI calls it hosted, Anthropic a server tool) is a tool the *provider* runs: the model searches the web or runs code, the provider executes it and puts the call and its result into the response. Unlike a function tool ([Tool calls](tools.md)), there is nothing for your code to run and no `ToolResult` to send back. The library has four jobs here: send the tool in the request, show what the provider did in the response and the stream, keep what the provider needs to go on with the conversation, and hand you the files the tools make.
 
 !!! note "Provider support"
-    The shared types below are in `aiollm-core` 0.16. A provider package takes them from its own release: the built-in tools of `aiollm-openai` and `aiollm-anthropic` are merged and come with their 0.16 releases; 0.15 does not send them. Each provider package also has a `tools` module (`aiollm_openai.tools`, `aiollm_anthropic.tools`) that builds its own tools as a `ProviderTool`, checked against the provider's request parameters. A provider that does not run a tool raises `RequestValidationError` for it rather than leave it out.
+    The shared types below are in `aiollm-core` 0.16, the files of the tools ([Files](#files)) in 0.17. A provider package takes them from its own release: the built-in tools of `aiollm-openai` and `aiollm-anthropic` come with their 0.16 releases (0.15 does not send them), their files with 0.17. Each provider package also has a `tools` module (`aiollm_openai.tools`, `aiollm_anthropic.tools`) that builds its own tools as a `ProviderTool`, checked against the provider's request parameters. A provider that does not run a tool raises `RequestValidationError` for it rather than leave it out.
 
 ## In the request
 
 Built-in tools go in the same `tools=` as functions, one list: `tools=[get_weather, WebSearch()]`. The shared ones are what both providers have:
 
 - `WebSearch(allowed_domains=..., user_location=...)`: a web search. `allowed_domains` limits it to the domains, at least one; `UserLocation(country=, region=, city=, timezone=)` localizes the results (every field is optional).
-- `CodeExecution()`: code run in the provider's sandbox. It has no shared options: the container, its memory and its network are each provider's own.
+- `CodeExecution(files=...)`: code run in the provider's sandbox. Its one shared option is `files`, stored files ([Stored files](files.md)) put into the sandbox for the code to read; the container itself, its memory and its network are each provider's own.
 - `ProviderTool(provider=, definition=)`: a tool of one provider as that provider takes it, for everything that is not shared (file search, web fetch, MCP, the options the shared tools lack: OpenAI's `search_context_size`, Anthropic's `blocked_domains` and `max_uses`, the version of an Anthropic tool). The `definition` is a JSON object, the tool as the provider's request holds it. Only that provider takes it; any other raises `RequestValidationError`, as it does for another provider's `ProviderFile`.
 
 ```python title="builtin_tools.py"
@@ -131,5 +131,39 @@ async def research_to_the_end(
 
 - **The last turn.** The order rules of [Shared generation](generation.md) say a conversation ends with a `user` turn or a tool result; the one other ending is an `assistant` turn with `native`, as above. Sending it after a generation that was not paused is the provider's to answer (Anthropic refuses a final assistant turn on current models).
 - **Only with built-in calls or a pause.** An ordinary text answer still goes back as text: `to_turn()` keeps `native` only for what the text cannot carry.
+
+## Files
+
+Code can write files: a chart, a cleaned table. `response.files` (and `CompletedEvent.files`) lists them as `ProducedFile`s: a `ProviderFile` with the file's `filename` and the `source_call_id` of the call that made it, when the provider tells them, and its `container_id`. `client.files.download(file)` streams any of them, whatever the provider keeps them in.
+
+- **Anthropic** keeps them with the files you store: `container_id` is `None`, and the file goes wherever a `ProviderFile` does (`retrieve`, `delete`, a part's `file`, another `CodeExecution`).
+- **OpenAI** keeps them in the code interpreter's container, only as long as the container lives, and the library downloads them from there: `container_id` is set, and only `download` reaches such a file; `retrieve`, `delete`, a part's `file` and `CodeExecution.files` refuse it with `RequestValidationError` before anything is sent. OpenAI names a file the code made only when the model refers to it in its text (a `container_file_citation`), so ask for the file in the prompt.
+
+To give the code files to read, upload them and pass their `ref`s:
+
+```python title="builtin_tools_files.py"
+from pathlib import Path
+from typing import Protocol
+
+from aiollm import CodeExecution, IFilesClient, IGenerationClient
+
+
+class FilesAndGeneration(IGenerationClient, IFilesClient, Protocol):
+    """A client with both resources, as every provider's is."""
+
+
+async def chart(client: FilesAndGeneration, table: Path, out: Path) -> None:
+    stored = await client.files.upload(table)
+    response = await client.generation.create(
+        model="gpt-6-astra",
+        input="Draw the sales by month as chart.png and link to it.",
+        tools=CodeExecution(files=[stored.ref]),
+    )
+    for file in response.files:
+        async with client.files.download(file) as content:
+            await content.save(out / (file.filename or file.id))
+```
+
+The library does not keep or clean up containers: the provider expires them (OpenAI after some idle minutes, Anthropic after 30 days), so download what you need soon.
 
 What each shared field becomes for each provider is listed under [Built-in tools](../unification.md#built-in-tools) in the field mapping.
