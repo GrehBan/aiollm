@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.17.0] - 2026-11-21
+
+### Added
+
+- Files of built-in tools: `GenerationResponse.files` and
+  `CompletedEvent.files` list the files a built-in tool made (a chart the code
+  drew) as `ProducedFile`s, a `ProviderFile` with its `filename`, the
+  `container_id` of a code container and the `source_call_id` of the call that
+  made it, as far as the provider tells them; `client.files.download(file)`
+  streams one from wherever it lives, a container included.
+  `CodeExecution(files=[...])` puts stored files into the sandbox for the code
+  to read. A file of a container is reached only by `download`: `retrieve`,
+  `delete`, a part's `file` and `CodeExecution.files` refuse it with
+  `RequestValidationError`, as they refuse another provider's file.
+  `aiollm.adapters.container_of(file)` tells an adapter which container holds a
+  file.
+
+### Changed
+
+- **Breaking:** for provider packages. `IFilesAdapter.to_download_method` (and
+  `BaseFilesAdapter`'s) takes the whole `ProviderFile` instead of its id, so
+  that a provider downloads a `ProducedFile` from its container or refuses it
+  where it has none: a provider changes the parameter and reads `file.id`, with
+  `container_of(file)` for the container. In the test kit, `BuiltinCase` takes
+  `coded`, `coded_stream`, `produced` and `code_files` (a code execution that
+  made a file, and the files a `CodeExecution` reads), and `FilesCase` takes
+  `container_download` (the path of a container file's download, `None` for a
+  provider without containers): a provider adds them to its cases.
+- `BuiltinCase.paused` and `BuiltinCase.continued` of the test kit are
+  optional: a provider whose API never pauses a turn (OpenAI's Responses API)
+  leaves them out, and the scenario that continues a paused turn is skipped for
+  it instead of failing. A provider that has them is checked as before.
+
 ## [0.16.0] - 2026-11-21
 
 ### Added
@@ -1404,7 +1437,8 @@ new locations:
 | `ai_api.providers.openai.client.api.openai` | `ai_api.providers.openai.api` |
 | `ai_api.providers.openai.client.exceptions.error_resolver.openai` | `ai_api.providers.openai.resolver` |
 
-[Unreleased]: https://github.com/aiollm-org/aiollm/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/aiollm-org/aiollm/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/aiollm-org/aiollm/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/aiollm-org/aiollm/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/aiollm-org/aiollm/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/aiollm-org/aiollm/compare/v0.13.0...v0.14.0

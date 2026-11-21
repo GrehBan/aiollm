@@ -1,1 +1,0 @@
-`BuiltinCase.paused` and `BuiltinCase.continued` of the test kit are optional: a provider whose API never pauses a turn (OpenAI's Responses API) leaves them out, and the scenario that continues a paused turn is skipped for it instead of failing. A provider that has them is checked as before.
