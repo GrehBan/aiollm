@@ -3,7 +3,7 @@
 A built-in tool (OpenAI calls it hosted, Anthropic a server tool) is a tool the *provider* runs: the model searches the web or runs code, the provider executes it and puts the call and its result into the response. Unlike a function tool ([Tool calls](tools.md)), there is nothing for your code to run and no `ToolResult` to send back. The library has three jobs here: send the tool in the request, show what the provider did in the response and the stream, and keep what the provider needs to go on with the conversation.
 
 !!! note "Provider support"
-    The shared types below are in `aiollm-core` 0.16. A provider package takes them from its own release: `aiollm-openai` and `aiollm-anthropic` 0.15 do not send built-in tools yet. A provider that does not run a tool raises `RequestValidationError` for it rather than leave it out.
+    The shared types below are in `aiollm-core` 0.16. A provider package takes them from its own release: the built-in tools of `aiollm-openai` and `aiollm-anthropic` are merged and come with their 0.16 releases; 0.15 does not send them. Each provider package also has a `tools` module (`aiollm_openai.tools`, `aiollm_anthropic.tools`) that builds its own tools as a `ProviderTool`, checked against the provider's request parameters. A provider that does not run a tool raises `RequestValidationError` for it rather than leave it out.
 
 ## In the request
 

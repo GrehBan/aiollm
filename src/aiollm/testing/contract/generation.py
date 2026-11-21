@@ -181,9 +181,12 @@ class BuiltinCase:
         searched_stream: A finished stream of the same.
         failed: A finished response whose web search failed.
         paused: A response that paused its turn in the middle of a
-            search, without text; its ``native`` output goes back.
+            search, without text; its ``native`` output goes back. Left
+            out by a provider whose API never pauses a turn, which
+            skips that scenario.
         continued: The body's conversation after its first turn, when
-            ``paused`` comes back with the user turn before it.
+            ``paused`` comes back with the user turn before it; given
+            with ``paused``.
     """
 
     tools: dict[str, Any]
@@ -191,8 +194,8 @@ class BuiltinCase:
     searched: dict[str, Any]
     searched_stream: list[dict[str, Any]]
     failed: dict[str, Any]
-    paused: dict[str, Any]
-    continued: list[Any]
+    paused: dict[str, Any] | None = None
+    continued: list[Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -1662,6 +1665,8 @@ class GenerationContract:
     ) -> None:
         """A paused generation continues with its native output."""
         case = self.case
+        if builtin.paused is None or builtin.continued is None:
+            pytest.skip("this provider's API never pauses a turn")
         recorder.reply(Reply(json=builtin.paused), Reply(json=case.response))
         request = with_tools(BUILTIN_TOOLS)
 

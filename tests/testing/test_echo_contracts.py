@@ -6,8 +6,11 @@ core, without any real provider, passes every scenario.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
+
+import pytest
 
 from aiollm.testing.contract.clients import ClientCase, ClientContract
 from aiollm.testing.contract.files import FilesCase, FilesContract
@@ -174,6 +177,34 @@ ECHO_GENERATION = GenerationCase(
 
 class TestEchoGeneration(GenerationContract):
     case = ECHO_GENERATION
+
+
+class NeverPauses(GenerationContract):
+    """The echo provider with an API that never pauses a turn."""
+
+    case = replace(
+        ECHO_GENERATION,
+        builtin=BuiltinCase(
+            tools={},
+            mixed={},
+            searched={},
+            searched_stream=[],
+            failed={},
+        ),
+    )
+
+
+async def test_a_provider_without_pauses_skips_the_paused_scenario() -> None:
+    """A case without ``paused`` skips the paused scenario."""
+    scenarios = NeverPauses()
+    builtin = scenarios.case.builtin
+    assert builtin is not None
+    assert builtin.paused is None
+    assert builtin.continued is None
+
+    run = scenarios.test_a_paused_generation_continues_with_its_native_output
+    with pytest.raises(pytest.skip.Exception, match="never pauses"):
+        await run(None, None, builtin)  # type: ignore[arg-type]
 
 
 ECHO_FILE: dict[str, Any] = {
